@@ -8,12 +8,19 @@ package sock
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"code.hybscloud.com/iox"
 )
+
+// seqpacketSupported reports whether SOCK_SEQPACKET is supported on this platform.
+// macOS/darwin does not support SOCK_SEQPACKET for Unix domain sockets.
+func seqpacketSupported() bool {
+	return runtime.GOOS != "darwin"
+}
 
 var testSeq atomic.Uint64
 
@@ -47,6 +54,9 @@ func TestNewUnixSockets(t *testing.T) {
 	})
 
 	t.Run("seqpacket", func(t *testing.T) {
+		if !seqpacketSupported() {
+			t.Skip("SOCK_SEQPACKET not supported on this platform")
+		}
 		sock, err := NewUnixSeqpacketSocket()
 		if err != nil {
 			t.Fatalf("NewUnixSeqpacketSocket: %v", err)
@@ -96,6 +106,9 @@ func TestListenUnix(t *testing.T) {
 	})
 
 	t.Run("unixpacket", func(t *testing.T) {
+		if !seqpacketSupported() {
+			t.Skip("SOCK_SEQPACKET not supported on this platform")
+		}
 		addr := uniqAddr("listen", "unixpacket")
 		lis, err := ListenUnix("unixpacket", addr)
 		if err != nil {
@@ -189,6 +202,9 @@ func TestDialUnix(t *testing.T) {
 	})
 
 	t.Run("unixpacket", func(t *testing.T) {
+		if !seqpacketSupported() {
+			t.Skip("SOCK_SEQPACKET not supported on this platform")
+		}
 		addr := uniqAddr("dial", "unixpacket")
 		lis, err := ListenUnix("unixpacket", addr)
 		if err != nil {
@@ -252,6 +268,9 @@ func TestUnixConnPairVariants(t *testing.T) {
 	})
 
 	t.Run("unixpacket", func(t *testing.T) {
+		if !seqpacketSupported() {
+			t.Skip("SOCK_SEQPACKET not supported on this platform")
+		}
 		pair, err := UnixConnPair("unixpacket")
 		if err != nil {
 			t.Fatalf("UnixConnPair unixpacket: %v", err)
