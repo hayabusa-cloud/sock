@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-version: ['1.25.x', 'stable']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Vet
+        env:
+          CGO_ENABLED: '0'
+        run: go vet ./...
+
+      - name: Test with race detector (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Test (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          CGO_ENABLED: '0'
+        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == 'stable'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          flags: sock
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  cross-build:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.25.x', 'stable']
+        goos: [linux, darwin, freebsd]
+        goarch: [amd64, arm64]
+        include:
+          - go-version: '1.25.x'
+            goos: linux
+            goarch: riscv64
+          - go-version: stable
+            goos: linux
+            goarch: riscv64
+          - go-version: '1.25.x'
+            goos: linux
+            goarch: loong64
+          - go-version: stable
+            goos: linux
+            goarch: loong64
+        exclude:
+          - goos: darwin
+            goarch: amd64
+          - goos: freebsd
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Cross-build (${{ matrix.goos }}/${{ matrix.goarch }})
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
