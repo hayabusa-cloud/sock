@@ -18,13 +18,15 @@ import (
 	"code.hybscloud.com/zcall"
 )
 
-// SCTPSocket represents an SCTP socket with SOCK_SEQPACKET semantics.
+// SCTPSocket represents an SCTP socket.
 // SCTP provides reliable, message-oriented transport with multi-streaming.
+// Use NewSCTPSocket4/6 for SOCK_SEQPACKET (one-to-many) or
+// NewSCTPStreamSocket4/6 for SOCK_STREAM (one-to-one) semantics.
 type SCTPSocket struct {
 	*NetSocket
 }
 
-// NewSCTPSocket4 creates a new IPv4 SCTP socket.
+// NewSCTPSocket4 creates a new IPv4 SCTP socket with SOCK_SEQPACKET (one-to-many).
 func NewSCTPSocket4() (*SCTPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_SEQPACKET, IPPROTO_SCTP)
 	if err != nil {
@@ -37,7 +39,7 @@ func NewSCTPSocket4() (*SCTPSocket, error) {
 	return &SCTPSocket{NetSocket: sock}, nil
 }
 
-// NewSCTPSocket6 creates a new IPv6 SCTP socket.
+// NewSCTPSocket6 creates a new IPv6 SCTP socket with SOCK_SEQPACKET (one-to-many).
 func NewSCTPSocket6() (*SCTPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET6, zcall.SOCK_SEQPACKET, IPPROTO_SCTP)
 	if err != nil {
@@ -50,7 +52,7 @@ func NewSCTPSocket6() (*SCTPSocket, error) {
 	return &SCTPSocket{NetSocket: sock}, nil
 }
 
-// NewSCTPStreamSocket4 creates a new IPv4 SCTP stream socket.
+// NewSCTPStreamSocket4 creates a new IPv4 SCTP socket with SOCK_STREAM (one-to-one).
 func NewSCTPStreamSocket4() (*SCTPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, IPPROTO_SCTP)
 	if err != nil {
@@ -63,7 +65,7 @@ func NewSCTPStreamSocket4() (*SCTPSocket, error) {
 	return &SCTPSocket{NetSocket: sock}, nil
 }
 
-// NewSCTPStreamSocket6 creates a new IPv6 SCTP stream socket.
+// NewSCTPStreamSocket6 creates a new IPv6 SCTP socket with SOCK_STREAM (one-to-one).
 func NewSCTPStreamSocket6() (*SCTPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET6, zcall.SOCK_STREAM, IPPROTO_SCTP)
 	if err != nil {
@@ -329,11 +331,12 @@ func (d *SCTPDialer) Dial(network string, laddr, raddr *SCTPAddr) (*SCTPConn, er
 }
 
 // ListenSCTP4 creates an SCTP listener on an IPv4 address.
+// Uses SOCK_STREAM (one-to-one) for proper Accept() semantics.
 func ListenSCTP4(laddr *SCTPAddr) (*SCTPListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket4()
+	sock, err := NewSCTPStreamSocket4()
 	if err != nil {
 		return nil, err
 	}
@@ -358,11 +361,12 @@ func ListenSCTP4(laddr *SCTPAddr) (*SCTPListener, error) {
 }
 
 // ListenSCTP6 creates an SCTP listener on an IPv6 address.
+// Uses SOCK_STREAM (one-to-one) for proper Accept() semantics.
 func ListenSCTP6(laddr *SCTPAddr) (*SCTPListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket6()
+	sock, err := NewSCTPStreamSocket6()
 	if err != nil {
 		return nil, err
 	}
