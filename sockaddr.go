@@ -153,7 +153,7 @@ func (sa *SockaddrUnix) Path() string {
 	}
 
 	// Pathname socket: stop at NUL terminator
-	for i := 0; i < pathLen; i++ {
+	for i := range pathLen {
 		if sa.raw.Path[i] == 0 {
 			return string(sa.raw.Path[:i])
 		}
