@@ -2,7 +2,7 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-//go:build linux
+//go:build rawsock
 
 package sock
 
@@ -122,10 +122,13 @@ type RawConn struct {
 //go:nosplit
 func (c *RawConn) LocalAddr() Addr { return c.laddr }
 
-// RemoteAddr returns the remote address.
-//
-//go:nosplit
-func (c *RawConn) RemoteAddr() Addr { return c.raddr }
+// RemoteAddr returns the remote address, or nil if not connected.
+func (c *RawConn) RemoteAddr() Addr {
+	if c.raddr == nil {
+		return nil
+	}
+	return c.raddr
+}
 
 // SetDeadline sets both read and write deadlines.
 // A zero value disables the deadline (pure non-blocking mode).
@@ -220,6 +223,9 @@ func ListenRaw(network string, laddr *IPAddr, protocol int) (*RawConn, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
 	}
+	if network != "ip" && network != "ip4" && network != "ip6" {
+		return nil, ErrUnknownNetwork
+	}
 	family := networkIPFamily(network, laddr.IP)
 	if family == NetworkIPv4 {
 		return ListenRaw4(laddr, protocol)
@@ -306,6 +312,9 @@ func DialRaw6(laddr, raddr *IPAddr, protocol int) (*RawConn, error) {
 func DialRaw(network string, laddr, raddr *IPAddr, protocol int) (*RawConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
+	}
+	if network != "ip" && network != "ip4" && network != "ip6" {
+		return nil, ErrUnknownNetwork
 	}
 	family := networkIPFamily(network, raddr.IP)
 	if family == NetworkIPv4 {

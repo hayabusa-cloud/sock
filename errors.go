@@ -70,6 +70,10 @@ var (
 	// ErrAddressFamilyNotSupported indicates the address family is not supported (EAFNOSUPPORT).
 	// For example, IPv6 on systems without IPv6 support.
 	ErrAddressFamilyNotSupported = errors.New("sock: address family not supported")
+
+	// ErrUnknownNetwork indicates an unrecognized network string was provided.
+	// Valid networks: "ip", "ip4", "ip6" for raw sockets.
+	ErrUnknownNetwork = errors.New("sock: unknown network")
 )
 
 // Errno constants for common error codes.
