@@ -132,54 +132,6 @@ func TestDialSCTP6_Error(t *testing.T) {
 	}
 }
 
-func TestListenRaw4_Error(t *testing.T) {
-	// nil address should fail
-	_, err := ListenRaw4(nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestListenRaw6_Error(t *testing.T) {
-	// nil address should fail
-	_, err := ListenRaw6(nil, IPPROTO_ICMPV6)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestListenRaw_Error(t *testing.T) {
-	// nil address should fail
-	_, err := ListenRaw("ip4", nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw4_Error(t *testing.T) {
-	// nil remote address should fail
-	_, err := DialRaw4(nil, nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw6_Error(t *testing.T) {
-	// nil remote address should fail
-	_, err := DialRaw6(nil, nil, IPPROTO_ICMPV6)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw_Error(t *testing.T) {
-	// nil remote address should fail
-	_, err := DialRaw("ip4", nil, nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
 func TestTCPListener_AcceptSocketCoverage(t *testing.T) {
 	addr := &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
 	lis, err := ListenTCP4(addr)
@@ -1785,7 +1737,7 @@ func TestSCTPConn_Deadlines(t *testing.T) {
 
 // ========== Multicast Tests (require interfaces) ==========
 
-func TestMulticastLoop(t *testing.T) {
+func TestMulticastLoopCoverage(t *testing.T) {
 	sock, err := NewUDPSocket4()
 	if err != nil {
 		t.Fatalf("NewUDPSocket4: %v", err)
@@ -1798,7 +1750,7 @@ func TestMulticastLoop(t *testing.T) {
 	}
 }
 
-func TestMulticastTTL(t *testing.T) {
+func TestMulticastTTLCoverage(t *testing.T) {
 	sock, err := NewUDPSocket4()
 	if err != nil {
 		t.Fatalf("NewUDPSocket4: %v", err)
@@ -2067,41 +2019,6 @@ func TestMulticast_Interface(t *testing.T) {
 
 // ========== Raw Socket Tests (Error Paths) ==========
 
-func TestRawSocket_CreateError(t *testing.T) {
-	// Try to create raw socket - will fail without CAP_NET_RAW
-	_, err := NewRawSocket4(IPPROTO_ICMP)
-	if err == nil {
-		// If it succeeded, we have permissions - test methods
-		t.Log("Have CAP_NET_RAW, skipping error path test")
-	} else {
-		// Expected to fail without permissions
-		if err != ErrPermission {
-			t.Logf("NewRawSocket4 error: %v", err)
-		}
-	}
-
-	_, err = NewRawSocket6(IPPROTO_ICMPV6)
-	if err == nil {
-		t.Log("Have CAP_NET_RAW for IPv6")
-	} else {
-		if err != ErrPermission {
-			t.Logf("NewRawSocket6 error: %v", err)
-		}
-	}
-}
-
-func TestRawSocket_ICMPCreate(t *testing.T) {
-	_, err := NewICMPSocket4()
-	if err != nil && err != ErrPermission {
-		t.Logf("NewICMPSocket4: %v", err)
-	}
-
-	_, err = NewICMPSocket6()
-	if err != nil && err != ErrPermission {
-		t.Logf("NewICMPSocket6: %v", err)
-	}
-}
-
 // ========== ResolveSCTPAddr Full Coverage ==========
 
 func TestResolveSCTPAddr_AllNetworks(t *testing.T) {
@@ -2137,7 +2054,7 @@ func TestResolveSCTPAddr_AllNetworks(t *testing.T) {
 
 // ========== UnixCredentials Tests ==========
 
-func TestUnixCredentials(t *testing.T) {
+func TestUnixCredentialsCoverage(t *testing.T) {
 	cred := &Ucred{
 		Pid: 1234,
 		Uid: 1000,
@@ -2417,7 +2334,7 @@ func TestSockaddrToTCPAddr_IPv6(t *testing.T) {
 
 // ========== TCPInfo Tests ==========
 
-func TestGetTCPInfo(t *testing.T) {
+func TestGetTCPInfoCoverage(t *testing.T) {
 	// Create a connected TCP socket
 	laddr := &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
 	lis, err := ListenTCP4(laddr)
@@ -2947,7 +2864,7 @@ func TestUnixConn_AllProtocols(t *testing.T) {
 
 // ========== GetTCPInfoInto Coverage ==========
 
-func TestGetTCPInfoInto(t *testing.T) {
+func TestGetTCPInfoIntoCoverage(t *testing.T) {
 	// Create a TCP connection
 	lis, err := ListenTCP4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -3016,284 +2933,17 @@ func TestRecvFDs_NoData(t *testing.T) {
 
 // ========== ListenRaw4/6 Success Path Coverage ==========
 
-func TestListenRaw_IfAvailable(t *testing.T) {
-	// Try to create raw socket - requires CAP_NET_RAW
-	conn, err := ListenRaw4(&net.IPAddr{IP: net.ParseIP("127.0.0.1")}, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	// If we got here, we have permissions - test the methods
-	localAddr := conn.LocalAddr()
-	t.Logf("Local address: %v", localAddr)
-
-	remoteAddr := conn.RemoteAddr()
-	t.Logf("Remote address: %v", remoteAddr)
-
-	// Test Read - will likely return ErrWouldBlock
-	buf := make([]byte, 1024)
-	_, err = conn.Read(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("Read: %v", err)
-	}
-
-	// Test RecvFrom
-	_, _, err = conn.RecvFrom(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("RecvFrom: %v", err)
-	}
-}
-
-func TestListenRaw6_IfAvailable(t *testing.T) {
-	conn, err := ListenRaw6(&net.IPAddr{IP: net.ParseIP("::1")}, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	localAddr := conn.LocalAddr()
-	t.Logf("Local address: %v", localAddr)
-}
-
 // ========== RawSocket Methods Coverage ==========
-
-func TestRawSocket_MethodsIfAvailable(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer sock.Close()
-
-	// Test Protocol
-	proto := sock.Protocol()
-	if proto != UnderlyingProtocolRaw {
-		t.Errorf("expected UnderlyingProtocolRaw, got %v", proto)
-	}
-
-	// Test SetIPHeaderIncluded
-	err = sock.SetIPHeaderIncluded(true)
-	if err != nil {
-		t.Logf("SetIPHeaderIncluded: %v", err)
-	}
-
-	// Test RecvFrom - will likely return ErrWouldBlock
-	buf := make([]byte, 1024)
-	_, _, err = sock.RecvFrom(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("RecvFrom: %v", err)
-	}
-
-	// Test SendTo
-	addr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	// Create a simple ICMP echo request packet
-	icmpPacket := []byte{
-		8, 0, // Type (Echo Request), Code
-		0, 0, // Checksum (will be wrong, but tests the path)
-		0, 1, // Identifier
-		0, 1, // Sequence number
-	}
-	_, err = sock.SendTo(icmpPacket, addr)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("SendTo: %v", err)
-	}
-}
 
 // ========== RawConn Method Coverage ==========
 
-func TestRawConn_MethodsIfAvailable(t *testing.T) {
-	conn, err := ListenRaw4(&IPAddr{IP: net.ParseIP("127.0.0.1")}, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	// Test LocalAddr
-	laddr := conn.LocalAddr()
-	if laddr == nil {
-		t.Error("LocalAddr returned nil")
-	}
-
-	// Test RemoteAddr (should be nil for unconnected)
-	raddr := conn.RemoteAddr()
-	if raddr != nil {
-		t.Logf("RemoteAddr: %v (unexpected for unconnected)", raddr)
-	}
-
-	// Test Read (will ErrWouldBlock or return data)
-	buf := make([]byte, 1024)
-	_, err = conn.Read(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("Read: %v", err)
-	}
-
-	// Test RecvFrom
-	_, addr, err := conn.RecvFrom(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("RecvFrom: %v", err)
-	}
-	_ = addr
-
-	// Test SendTo
-	destAddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	icmpPacket := []byte{8, 0, 0, 0, 0, 1, 0, 1}
-	_, err = conn.SendTo(icmpPacket, destAddr)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("SendTo: %v", err)
-	}
-}
-
-func TestRawConn_WriteIfConnected(t *testing.T) {
-	// Test connected RawConn.Write
-	conn, err := DialRaw4(nil, &IPAddr{IP: net.ParseIP("127.0.0.1")}, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	// Test LocalAddr
-	laddr := conn.LocalAddr()
-	t.Logf("Local address: %v", laddr)
-
-	// Test RemoteAddr
-	raddr := conn.RemoteAddr()
-	t.Logf("Remote address: %v", raddr)
-
-	// Test Write (connected)
-	icmpPacket := []byte{8, 0, 0, 0, 0, 1, 0, 1}
-	_, err = conn.Write(icmpPacket)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("Write: %v", err)
-	}
-}
-
-func TestRawConn_WriteNotConnected(t *testing.T) {
-	conn, err := ListenRaw4(&IPAddr{IP: net.ParseIP("127.0.0.1")}, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	// Write on unconnected should fail
-	_, err = conn.Write([]byte{8, 0, 0, 0})
-	if err != ErrNotConnected {
-		t.Logf("Write on unconnected: %v (expected ErrNotConnected)", err)
-	}
-}
-
 // ========== DialRaw Coverage ==========
-
-func TestDialRaw4_WithLocalAddrCoverage(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	raddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := DialRaw4(laddr, raddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr returned nil")
-	}
-	if conn.RemoteAddr() == nil {
-		t.Error("RemoteAddr returned nil")
-	}
-}
-
-func TestDialRaw6_WithLocalAddrCoverage(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("::1")}
-	raddr := &IPAddr{IP: net.ParseIP("::1")}
-	conn, err := DialRaw6(laddr, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr returned nil")
-	}
-}
-
-func TestDialRaw_Generic(t *testing.T) {
-	raddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := DialRaw("ip4", nil, raddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-}
-
-func TestDialRaw_IPv6Generic(t *testing.T) {
-	raddr := &IPAddr{IP: net.ParseIP("::1")}
-	conn, err := DialRaw("ip6", nil, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-}
 
 // ========== ListenRaw Coverage ==========
 
-func TestListenRaw_Generic(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := ListenRaw("ip4", laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-}
-
-func TestListenRaw_IPv6Generic(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("::1")}
-	conn, err := ListenRaw("ip6", laddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer conn.Close()
-}
-
 // ========== RawSocket SendTo IPv6 Coverage ==========
 
-func TestRawSocket_SendToIPv6(t *testing.T) {
-	sock, err := NewRawSocket6(IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-	defer sock.Close()
-
-	addr := &IPAddr{IP: net.ParseIP("::1")}
-	icmpv6Packet := []byte{128, 0, 0, 0, 0, 1, 0, 1} // Echo Request
-	_, err = sock.SendTo(icmpv6Packet, addr)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("SendTo IPv6: %v", err)
-	}
-}
-
 // ========== RawSocket RecvFrom/SendTo Closed Coverage ==========
-
-func TestRawSocket_ClosedFdError(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("Raw sockets not available: %v", err)
-	}
-
-	// Close the socket
-	sock.Close()
-
-	// RecvFrom on closed should fail
-	buf := make([]byte, 1024)
-	_, _, err = sock.RecvFrom(buf)
-	if err != ErrClosed {
-		t.Logf("RecvFrom on closed: %v (expected ErrClosed)", err)
-	}
-
-	// SendTo on closed should fail
-	addr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	_, err = sock.SendTo([]byte{8, 0, 0, 0}, addr)
-	if err != ErrClosed {
-		t.Logf("SendTo on closed: %v (expected ErrClosed)", err)
-	}
-}
 
 // ========== UDPConn SendTo Coverage ==========
 
@@ -3447,24 +3097,6 @@ func TestNewSCTPSocket6_DefaultsApplied(t *testing.T) {
 		t.Logf("GetSCTPNodelay: %v", err)
 	}
 	t.Logf("SCTP nodelay default: %v", nodelay)
-}
-
-// ========== decodeIPAddr Coverage ==========
-
-func TestDecodeIPAddr_NilInput(t *testing.T) {
-	addr := decodeIPAddr(nil)
-	if addr != nil {
-		t.Error("expected nil for nil input")
-	}
-}
-
-func TestDecodeIPAddr_UnknownFamilyInput(t *testing.T) {
-	raw := &RawSockaddrAny{}
-	raw.Addr.Family = 255 // Unknown family
-	addr := decodeIPAddr(raw)
-	if addr != nil {
-		t.Error("expected nil for unknown family")
-	}
 }
 
 // ========== SCTPListener AcceptSocket Coverage ==========
@@ -3860,216 +3492,6 @@ func TestUDPConn_GetBroadcast(t *testing.T) {
 
 // --- Raw socket tests (without CAP_NET_RAW, test error paths) ---
 
-func TestRawSocket_CreationFailure(t *testing.T) {
-	// Try to create raw socket (will likely fail without CAP_NET_RAW)
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		// Expected to fail without capabilities
-		t.Logf("NewRawSocket4 failed as expected: %v", err)
-		return
-	}
-	defer sock.Close()
-
-	// If we got here, we have CAP_NET_RAW - test the socket
-	if sock.Protocol() != UnderlyingProtocolRaw {
-		t.Error("expected UnderlyingProtocolRaw")
-	}
-}
-
-func TestRawSocket6_CreationFailure(t *testing.T) {
-	sock, err := NewRawSocket6(IPPROTO_ICMPV6)
-	if err != nil {
-		t.Logf("NewRawSocket6 failed as expected: %v", err)
-		return
-	}
-	defer sock.Close()
-
-	if sock.Protocol() != UnderlyingProtocolRaw {
-		t.Error("expected UnderlyingProtocolRaw")
-	}
-}
-
-func TestNewICMPSocket4_Coverage(t *testing.T) {
-	sock, err := NewICMPSocket4()
-	if err != nil {
-		t.Logf("NewICMPSocket4 failed (expected without CAP_NET_RAW): %v", err)
-		return
-	}
-	defer sock.Close()
-}
-
-func TestNewICMPSocket6_Coverage(t *testing.T) {
-	sock, err := NewICMPSocket6()
-	if err != nil {
-		t.Logf("NewICMPSocket6 failed (expected without CAP_NET_RAW): %v", err)
-		return
-	}
-	defer sock.Close()
-}
-
-func TestListenRaw4_NilAddress(t *testing.T) {
-	_, err := ListenRaw4(nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestListenRaw6_NilAddress(t *testing.T) {
-	_, err := ListenRaw6(nil, IPPROTO_ICMPV6)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestListenRaw_NilAddr(t *testing.T) {
-	_, err := ListenRaw("ip4", nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw4_NilAddr(t *testing.T) {
-	_, err := DialRaw4(nil, nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw6_NilAddr(t *testing.T) {
-	_, err := DialRaw6(nil, nil, IPPROTO_ICMPV6)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestDialRaw_NilAddr(t *testing.T) {
-	_, err := DialRaw("ip4", nil, nil, IPPROTO_ICMP)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
-func TestRawConn_Methods(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv4(127, 0, 0, 1)}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	// Test LocalAddr
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr returned nil")
-	}
-
-	// Test RemoteAddr (should be nil for listening socket)
-	if conn.RemoteAddr() != nil {
-		t.Error("RemoteAddr should be nil for listening socket")
-	}
-
-	// Test SetDeadline
-	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetDeadline: %v", err)
-	}
-
-	// Test SetReadDeadline
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetReadDeadline: %v", err)
-	}
-
-	// Test SetWriteDeadline
-	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetWriteDeadline: %v", err)
-	}
-
-	// Test SetIPHeaderIncluded
-	if err := conn.SetIPHeaderIncluded(true); err != nil {
-		t.Errorf("SetIPHeaderIncluded: %v", err)
-	}
-
-	// Clear deadlines
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		t.Errorf("SetDeadline(zero): %v", err)
-	}
-}
-
-func TestRawConn_ReadWriteUnconnected(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv4(127, 0, 0, 1)}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	// Test Write on unconnected socket should fail
-	_, err = conn.Write([]byte{0x08, 0x00, 0x00, 0x00})
-	if err != ErrNotConnected {
-		t.Errorf("Write on unconnected: expected ErrNotConnected, got %v", err)
-	}
-
-	// Test Read with no deadline (non-blocking)
-	buf := make([]byte, 64)
-	_, err = conn.Read(buf)
-	if err != iox.ErrWouldBlock {
-		t.Logf("Read: %v (expected ErrWouldBlock or data)", err)
-	}
-}
-
-func TestDialRaw4_WithLocalAddrAndRemote(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv4(127, 0, 0, 1)}
-	raddr := &IPAddr{IP: net.IPv4(127, 0, 0, 1)}
-	conn, err := DialRaw4(laddr, raddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("DialRaw4 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr should not be nil")
-	}
-	if conn.RemoteAddr() == nil {
-		t.Error("RemoteAddr should not be nil")
-	}
-}
-
-func TestDialRaw6_WithLocalAddrAndRemote(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv6loopback}
-	raddr := &IPAddr{IP: net.IPv6loopback}
-	conn, err := DialRaw6(laddr, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("DialRaw6 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr should not be nil")
-	}
-}
-
-func TestDialRaw_IPv6(t *testing.T) {
-	raddr := &IPAddr{IP: net.IPv6loopback}
-	conn, err := DialRaw("ip6", nil, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("DialRaw ip6 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-}
-
-func TestListenRaw_IPv6(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv6loopback}
-	conn, err := ListenRaw("ip6", laddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("ListenRaw ip6 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-}
-
 // --- NewNetUnixSocket ---
 
 func TestNewNetUnixSocket(t *testing.T) {
@@ -4236,13 +3658,22 @@ func TestParseUnixRights_EdgeCases(t *testing.T) {
 		t.Error("expected empty fds for small buffer")
 	}
 
-	// Buffer with invalid cmsg length
+	// Buffer with invalid cmsg length (Len = 0)
 	buf := make([]byte, 32)
 	cmsg := (*Cmsghdr)(unsafe.Pointer(&buf[0]))
 	cmsg.Len = 0 // Invalid
 	fds = ParseUnixRights(buf)
 	if len(fds) != 0 {
 		t.Error("expected empty fds for invalid cmsg len")
+	}
+
+	// Buffer with cmsg.Len larger than remaining buffer (p+msgLen > len(buf))
+	buf = make([]byte, 32)
+	cmsg = (*Cmsghdr)(unsafe.Pointer(&buf[0]))
+	cmsg.Len = 100 // Claims more bytes than buffer contains
+	fds = ParseUnixRights(buf)
+	if len(fds) != 0 {
+		t.Error("expected empty fds for truncated cmsg")
 	}
 }
 
@@ -4722,29 +4153,6 @@ func TestGetSCTPInitMsg_ClosedSocket(t *testing.T) {
 	_, err = GetSCTPInitMsg(sock.fd)
 	if err == nil {
 		t.Error("expected error on closed socket")
-	}
-}
-
-func TestRawConn_ReadWithoutRemoteCoverage(t *testing.T) {
-	laddr := &IPAddr{IP: net.IPv4(0, 0, 0, 0)}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4 failed (need CAP_NET_RAW): %v", err)
-		return
-	}
-	defer conn.Close()
-
-	// Read without raddr uses RecvFrom
-	buf := make([]byte, 1500)
-	_, err = conn.Read(buf)
-	if err != nil && err != iox.ErrWouldBlock {
-		t.Logf("Read (unconnected): %v", err)
-	}
-
-	// Write without raddr should fail
-	_, err = conn.Write([]byte{8, 0, 0, 0})
-	if err != ErrNotConnected {
-		t.Errorf("expected ErrNotConnected for Write on unconnected socket, got %v", err)
 	}
 }
 
@@ -5533,6 +4941,65 @@ func TestSockaddrUnix_SetPath_MaxLength(t *testing.T) {
 	t.Logf("max path length: %d", len(path))
 }
 
+// TestSockaddrUnix_SetPath_ExactlyMaxPath tests SetPath with a path that
+// exactly fills the Path array, triggering the "no room for NUL" branch.
+func TestSockaddrUnix_SetPath_ExactlyMaxPath(t *testing.T) {
+	sa := &SockaddrUnix{}
+	// Create a path that exactly fills the Path array (108 bytes on Linux)
+	fullPath := make([]byte, len(sa.raw.Path))
+	for i := range fullPath {
+		fullPath[i] = 'x'
+	}
+	// SetPath should set length to 2 + 108 (no NUL terminator)
+	sa.SetPath(string(fullPath))
+	expected := uint32(2 + len(sa.raw.Path))
+	if sa.length != expected {
+		t.Errorf("SetPath full path: length = %d, want %d", sa.length, expected)
+	}
+}
+
+// TestSockaddrUnix_Path_ZeroLengthNoNul tests the fallback when length < 2
+// and the Path array has no NUL byte (all non-zero).
+func TestSockaddrUnix_Path_ZeroLengthNoNul(t *testing.T) {
+	sa := &SockaddrUnix{}
+	// Fill path array with non-zero bytes
+	for i := range sa.raw.Path {
+		sa.raw.Path[i] = 'x'
+	}
+	// length < 2 triggers fallback search for NUL
+	sa.length = 0
+
+	path := sa.Path()
+	// Since no NUL byte found, should return ""
+	if path != "" {
+		t.Errorf("expected empty path for no-NUL fallback, got %q", path)
+	}
+}
+
+// TestDecodeSockaddr_UnixNoNul tests DecodeSockaddr for AF_UNIX with no NUL in path.
+func TestDecodeSockaddr_UnixNoNul(t *testing.T) {
+	// AF_UNIX with no NUL in path (full-length path)
+	var rawUnix RawSockaddrAny
+	sunix := (*RawSockaddrUnix)(unsafe.Pointer(&rawUnix))
+	sunix.Family = AF_UNIX
+	// Fill path with non-zero bytes (no NUL terminator)
+	for i := range sunix.Path {
+		sunix.Path[i] = 'x'
+	}
+	sa := DecodeSockaddr(&rawUnix)
+	if sa == nil {
+		t.Fatal("expected non-nil sockaddr for AF_UNIX")
+	}
+	usa, ok := sa.(*SockaddrUnix)
+	if !ok {
+		t.Fatalf("expected *SockaddrUnix, got %T", sa)
+	}
+	// Should have full length since no NUL found
+	if usa.length != SizeofSockaddrUnix {
+		t.Logf("length = %d, expected %d", usa.length, SizeofSockaddrUnix)
+	}
+}
+
 // adaptiveWrite with deadline expiry
 func TestAdaptiveWrite_DeadlineExpired(t *testing.T) {
 	// Create a socket pair
@@ -5845,119 +5312,6 @@ func TestSetCloseOnExec_Error(t *testing.T) {
 
 // ========== rawConn (syscall.RawConn) Tests ==========
 
-func TestRawConn_Control(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	defer sock.Close()
-
-	rc := newRawConn(sock.fd)
-
-	var capturedFD uintptr
-	err = rc.Control(func(fd uintptr) {
-		capturedFD = fd
-	})
-	if err != nil {
-		t.Errorf("Control: %v", err)
-	}
-	if capturedFD != uintptr(sock.fd.Raw()) {
-		t.Errorf("Control: expected fd %d, got %d", sock.fd.Raw(), capturedFD)
-	}
-}
-
-func TestRawConn_ControlClosed(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	rc := newRawConn(sock.fd)
-	sock.Close()
-
-	err = rc.Control(func(fd uintptr) {})
-	if err != ErrClosed {
-		t.Errorf("Control on closed: expected ErrClosed, got %v", err)
-	}
-}
-
-func TestRawConn_Read(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	defer sock.Close()
-
-	rc := newRawConn(sock.fd)
-
-	// Test Read with function that returns true immediately
-	var callCount int
-	err = rc.Read(func(fd uintptr) bool {
-		callCount++
-		return true // Done immediately
-	})
-	if err != nil {
-		t.Errorf("Read: %v", err)
-	}
-	if callCount != 1 {
-		t.Errorf("Read: expected 1 call, got %d", callCount)
-	}
-}
-
-func TestRawConn_ReadClosed(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	rc := newRawConn(sock.fd)
-	sock.Close()
-
-	err = rc.Read(func(fd uintptr) bool {
-		return true
-	})
-	if err != ErrClosed {
-		t.Errorf("Read on closed: expected ErrClosed, got %v", err)
-	}
-}
-
-func TestRawConn_Write(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	defer sock.Close()
-
-	rc := newRawConn(sock.fd)
-
-	// Test Write with function that returns true immediately
-	var callCount int
-	err = rc.Write(func(fd uintptr) bool {
-		callCount++
-		return true // Done immediately
-	})
-	if err != nil {
-		t.Errorf("Write: %v", err)
-	}
-	if callCount != 1 {
-		t.Errorf("Write: expected 1 call, got %d", callCount)
-	}
-}
-
-func TestRawConn_WriteClosed(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	rc := newRawConn(sock.fd)
-	sock.Close()
-
-	err = rc.Write(func(fd uintptr) bool {
-		return true
-	})
-	if err != ErrClosed {
-		t.Errorf("Write on closed: expected ErrClosed, got %v", err)
-	}
-}
-
 // ========== SyscallConn Tests ==========
 
 func TestTCPConn_SyscallConn(t *testing.T) {
@@ -6003,6 +5357,22 @@ func TestTCPConn_SyscallConn(t *testing.T) {
 	if capturedFD == 0 {
 		t.Error("Control: fd should not be 0")
 	}
+
+	// Test Read method (must return true immediately to avoid infinite loop)
+	err = rc.Read(func(fd uintptr) bool {
+		return true // Signal done immediately
+	})
+	if err != nil {
+		t.Errorf("Read: %v", err)
+	}
+
+	// Test Write method (must return true immediately to avoid infinite loop)
+	err = rc.Write(func(fd uintptr) bool {
+		return true // Signal done immediately
+	})
+	if err != nil {
+		t.Errorf("Write: %v", err)
+	}
 }
 
 func TestTCPConn_SyscallConnClosed(t *testing.T) {
@@ -6035,6 +5405,63 @@ func TestTCPConn_SyscallConnClosed(t *testing.T) {
 	_, err = conn.SyscallConn()
 	if err != ErrClosed {
 		t.Errorf("SyscallConn on closed: expected ErrClosed, got %v", err)
+	}
+}
+
+func TestRawConn_ReadWriteClosed(t *testing.T) {
+	laddr := &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+	lis, err := ListenTCP4(laddr)
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer lis.Close()
+
+	lisAddr := lis.Addr().(*TCPAddr)
+
+	go func() {
+		lis.SetDeadline(time.Now().Add(time.Second))
+		conn, _ := lis.Accept()
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := DialTCP4(nil, lisAddr)
+	if err != nil {
+		t.Fatalf("DialTCP4: %v", err)
+	}
+
+	// Get SyscallConn while open
+	rc, err := conn.SyscallConn()
+	if err != nil {
+		t.Fatalf("SyscallConn: %v", err)
+	}
+
+	// Close the connection
+	conn.Close()
+
+	// Test Read on closed - should return ErrClosed
+	err = rc.Read(func(fd uintptr) bool {
+		return true
+	})
+	if err != ErrClosed {
+		t.Errorf("Read on closed: expected ErrClosed, got %v", err)
+	}
+
+	// Test Write on closed - should return ErrClosed
+	err = rc.Write(func(fd uintptr) bool {
+		return true
+	})
+	if err != ErrClosed {
+		t.Errorf("Write on closed: expected ErrClosed, got %v", err)
+	}
+
+	// Test Control on closed - should return ErrClosed
+	err = rc.Control(func(fd uintptr) {})
+	if err != ErrClosed {
+		t.Errorf("Control on closed: expected ErrClosed, got %v", err)
 	}
 }
 
@@ -6243,196 +5670,7 @@ func TestUDPConn_WriteMsgUDP_IPv6Addr(t *testing.T) {
 
 // ========== RawSocket Tests (without CAP_NET_RAW) ==========
 
-func TestRawSocket_ProtocolMethod(t *testing.T) {
-	// Try to create raw socket (will fail without CAP_NET_RAW)
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("NewRawSocket4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer sock.Close()
-
-	// Test Protocol method
-	if sock.Protocol() != UnderlyingProtocolRaw {
-		t.Errorf("Protocol: expected UnderlyingProtocolRaw, got %v", sock.Protocol())
-	}
-}
-
-func TestRawSocket_RecvFromClosed(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("NewRawSocket4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	sock.Close()
-
-	buf := make([]byte, 64)
-	_, _, err = sock.RecvFrom(buf)
-	if err != ErrClosed {
-		t.Errorf("RecvFrom on closed: expected ErrClosed, got %v", err)
-	}
-}
-
-func TestRawSocket_SendToClosed(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("NewRawSocket4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	sock.Close()
-
-	addr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	_, err = sock.SendTo([]byte("test"), addr)
-	if err != ErrClosed {
-		t.Errorf("SendTo on closed: expected ErrClosed, got %v", err)
-	}
-}
-
-func TestRawSocket_SetIPHeaderIncludedOpt(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_RAW)
-	if err != nil {
-		t.Skipf("NewRawSocket4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer sock.Close()
-
-	err = sock.SetIPHeaderIncluded(true)
-	if err != nil {
-		t.Errorf("SetIPHeaderIncluded: %v", err)
-	}
-}
-
 // ========== RawConn Tests ==========
-
-func TestRawConn_Accessors(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// Test LocalAddr
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr: expected non-nil")
-	}
-
-	// Test RemoteAddr (should be nil for unconnected)
-	if conn.RemoteAddr() != nil {
-		t.Error("RemoteAddr: expected nil for unconnected socket")
-	}
-}
-
-func TestRawConn_Deadlines(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// Test SetDeadline
-	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetDeadline: %v", err)
-	}
-
-	// Test SetReadDeadline
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetReadDeadline: %v", err)
-	}
-
-	// Test SetWriteDeadline
-	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Errorf("SetWriteDeadline: %v", err)
-	}
-
-	// Clear deadlines
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		t.Errorf("SetDeadline clear: %v", err)
-	}
-}
-
-func TestRawConn_ReadWriteNotConnected(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// Write without remote address should fail
-	_, err = conn.Write([]byte("test"))
-	if err != ErrNotConnected {
-		t.Errorf("Write not connected: expected ErrNotConnected, got %v", err)
-	}
-}
-
-func TestRawConn_RecvFromSendToMethods(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	conn, err := ListenRaw4(laddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("ListenRaw4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// These just call through to RawSocket methods
-	// Test that they work without error
-	conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-
-	buf := make([]byte, 64)
-	_, _, err = conn.RecvFrom(buf)
-	// Expected to timeout or return ErrWouldBlock
-	t.Logf("RecvFrom: %v", err)
-
-	// SendTo
-	addr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	_, err = conn.SendTo([]byte{8, 0, 0, 0, 0, 1, 0, 1}, addr) // ICMP echo request
-	t.Logf("SendTo: %v", err)
-}
-
-func TestDialRaw4_WithLocalAddrBinding(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-	raddr := &IPAddr{IP: net.ParseIP("127.0.0.1")}
-
-	conn, err := DialRaw4(laddr, raddr, IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("DialRaw4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// Check that local and remote addresses are set
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr: expected non-nil")
-	}
-	if conn.RemoteAddr() == nil {
-		t.Error("RemoteAddr: expected non-nil")
-	}
-}
-
-func TestDialRaw6_WithLocalAddrBinding(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("::1")}
-	raddr := &IPAddr{IP: net.ParseIP("::1")}
-
-	conn, err := DialRaw6(laddr, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("DialRaw6: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer conn.Close()
-
-	// Check that local and remote addresses are set
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr: expected non-nil")
-	}
-	if conn.RemoteAddr() == nil {
-		t.Error("RemoteAddr: expected non-nil")
-	}
-}
 
 // ========== IPv6 Socket Creation Tests ==========
 
@@ -6500,19 +5738,6 @@ func TestNewSCTPStreamSocket6_Protocol(t *testing.T) {
 	}
 }
 
-func TestNewRawSocket6_ProtocolCheck(t *testing.T) {
-	sock, err := NewRawSocket6(IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("NewRawSocket6: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer sock.Close()
-
-	if sock.Protocol() != UnderlyingProtocolRaw {
-		t.Errorf("Protocol: expected Raw, got %v", sock.Protocol())
-	}
-}
-
 // ========== Additional Error Path Tests ==========
 
 func TestUDPSocket_SendToIPv6Addr(t *testing.T) {
@@ -6532,21 +5757,6 @@ func TestUDPSocket_SendToIPv6Addr(t *testing.T) {
 	addr := &UDPAddr{IP: net.ParseIP("::1"), Port: 12345}
 	_, err = sock.SendTo([]byte("test"), addr)
 	// May fail if no listener, but exercises the IPv6 path
-	t.Logf("SendTo IPv6: %v", err)
-}
-
-func TestRawSocket_SendToIPv6Addr(t *testing.T) {
-	sock, err := NewRawSocket6(IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("NewRawSocket6: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer sock.Close()
-
-	// Send to IPv6 address
-	addr := &IPAddr{IP: net.ParseIP("::1")}
-	_, err = sock.SendTo([]byte{128, 0, 0, 0, 0, 1, 0, 1}, addr) // ICMPv6 echo request
-	// May fail, but exercises the IPv6 path
 	t.Logf("SendTo IPv6: %v", err)
 }
 
@@ -7040,6 +6250,76 @@ func TestRecvFDs_ClosedSocket(t *testing.T) {
 	pair[1].Close()
 }
 
+// TestSendFDs_EmptyData tests SendFDs with empty data buffer.
+func TestSendFDs_EmptyData(t *testing.T) {
+	pair, err := UnixConnPair("unix")
+	if err != nil {
+		t.Fatalf("UnixConnPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Create a pipe to have valid file descriptors
+	pipeR, pipeW, err := osPipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer closeFd(pipeR)
+	defer closeFd(pipeW)
+
+	// Send with empty data (nil) - should use fallback []byte{0}
+	n, err := SendFDs(pair[0].fd, []int{pipeR, pipeW}, nil)
+	if err != nil {
+		t.Fatalf("SendFDs with nil data: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("SendFDs: wrote %d bytes, want 1", n)
+	}
+
+	// Receive to verify
+	buf := make([]byte, 16)
+	rn, fds, err := RecvFDs(pair[1].fd, buf, 4)
+	if err != nil {
+		t.Fatalf("RecvFDs: %v", err)
+	}
+	t.Logf("RecvFDs: n=%d, fds=%d", rn, len(fds))
+}
+
+// TestRecvFDs_NilDataBuf tests RecvFDs with nil data buffer.
+func TestRecvFDs_NilDataBuf(t *testing.T) {
+	pair, err := UnixConnPair("unix")
+	if err != nil {
+		t.Fatalf("UnixConnPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Create a pipe for valid FDs
+	pipeR, pipeW, err := osPipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer closeFd(pipeR)
+	defer closeFd(pipeW)
+
+	// Send FDs first
+	n, err := SendFDs(pair[0].fd, []int{pipeR}, []byte("x"))
+	if err != nil {
+		t.Fatalf("SendFDs: %v", err)
+	}
+	t.Logf("SendFDs: n=%d", n)
+
+	// Receive with nil data buffer - should allocate internally
+	rn, fds, err := RecvFDs(pair[1].fd, nil, 4)
+	if err != nil {
+		t.Fatalf("RecvFDs with nil buf: %v", err)
+	}
+	if rn != 1 {
+		t.Errorf("RecvFDs: got %d bytes, want 1", rn)
+	}
+	t.Logf("RecvFDs: n=%d, fds=%d", rn, len(fds))
+}
+
 func TestSendMsg_ClosedSocket(t *testing.T) {
 	pair, err := UnixConnPair("unix")
 	if err != nil {
@@ -7094,27 +6374,6 @@ func TestTCPInfoInto_ClosedSocket(t *testing.T) {
 	err = GetTCPInfoInto(sock.fd, &info)
 	if err == nil {
 		t.Error("expected error on closed socket")
-	}
-}
-
-func TestRawConn_ReadWrite_Closed(t *testing.T) {
-	sock, err := NewTCPSocket4()
-	if err != nil {
-		t.Fatalf("NewTCPSocket4: %v", err)
-	}
-	rc := newRawConn(sock.fd)
-	sock.Close()
-
-	// Read on closed
-	err = rc.Read(func(fd uintptr) bool { return true })
-	if err == nil {
-		t.Error("expected error on closed socket Read")
-	}
-
-	// Write on closed
-	err = rc.Write(func(fd uintptr) bool { return true })
-	if err == nil {
-		t.Error("expected error on closed socket Write")
 	}
 }
 
@@ -7225,57 +6484,6 @@ func TestListenSCTP_IPv6Network(t *testing.T) {
 		return
 	}
 	ln.Close()
-}
-
-func TestDialRaw_IPv6Network(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("::1")}
-	raddr := &IPAddr{IP: net.ParseIP("::1")}
-	conn, err := DialRaw("ip6", laddr, raddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("DialRaw: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	conn.Close()
-}
-
-func TestListenRaw_IPv6Network(t *testing.T) {
-	laddr := &IPAddr{IP: net.ParseIP("::1")}
-	conn, err := ListenRaw("ip6", laddr, IPPROTO_ICMPV6)
-	if err != nil {
-		t.Skipf("ListenRaw: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	conn.Close()
-}
-
-func TestRawConn_SetDeadlines(t *testing.T) {
-	sock, err := NewRawSocket4(IPPROTO_ICMP)
-	if err != nil {
-		t.Skipf("NewRawSocket4: %v (requires CAP_NET_RAW)", err)
-		return
-	}
-	defer sock.Close()
-
-	conn := &RawConn{RawSocket: sock, laddr: &IPAddr{IP: net.ParseIP("127.0.0.1")}}
-
-	// Test deadline setters
-	if err := conn.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
-		t.Errorf("SetDeadline: %v", err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(1 * time.Second)); err != nil {
-		t.Errorf("SetReadDeadline: %v", err)
-	}
-	if err := conn.SetWriteDeadline(time.Now().Add(1 * time.Second)); err != nil {
-		t.Errorf("SetWriteDeadline: %v", err)
-	}
-
-	// Test LocalAddr/RemoteAddr
-	if conn.LocalAddr() == nil {
-		t.Error("LocalAddr is nil")
-	}
-	if conn.RemoteAddr() != nil {
-		t.Error("RemoteAddr should be nil for unconnected socket")
-	}
 }
 
 func TestDecodeSCTPAddr_IPv6(t *testing.T) {
@@ -7761,5 +6969,257 @@ func TestSCTPDialer_NilRaddr(t *testing.T) {
 	_, err := dialer.Dial("sctp", nil, nil)
 	if err != ErrInvalidParam {
 		t.Errorf("Expected ErrInvalidParam, got %v", err)
+	}
+}
+
+// ========== ReadMsgUDP/WriteMsgUDP Deadline Coverage Tests ==========
+
+// TestReadMsgUDP_DeadlineExpired tests ReadMsgUDP when deadline is already expired.
+func TestReadMsgUDP_DeadlineExpired(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Set deadline in the past
+	conn.SetReadDeadline(time.Now().Add(-time.Second))
+
+	buf := make([]byte, 1024)
+	_, _, _, _, err = conn.ReadMsgUDP(buf, nil)
+	if err != ErrTimedOut {
+		t.Errorf("ReadMsgUDP with expired deadline: expected ErrTimedOut, got %v", err)
+	}
+}
+
+// TestReadMsgUDP_DeadlineRetrySuccess tests ReadMsgUDP retry loop with backoff.
+func TestReadMsgUDP_DeadlineRetrySuccess(t *testing.T) {
+	receiver, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer receiver.Close()
+
+	receiverAddr := receiver.LocalAddr().(*UDPAddr)
+
+	sender, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer sender.Close()
+
+	// Set deadline that gives time for retry
+	receiver.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	// Send data after a short delay (forces retry loop)
+	testData := []byte("deadline retry test")
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		sender.WriteTo(testData, receiverAddr)
+	}()
+
+	buf := make([]byte, 1024)
+	n, _, _, addr, err := receiver.ReadMsgUDP(buf, nil)
+	if err != nil {
+		t.Fatalf("ReadMsgUDP with retry: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("ReadMsgUDP: got %d bytes, want %d", n, len(testData))
+	}
+	if string(buf[:n]) != string(testData) {
+		t.Errorf("ReadMsgUDP: got %q, want %q", buf[:n], testData)
+	}
+	if addr == nil {
+		t.Error("ReadMsgUDP: addr is nil")
+	}
+}
+
+// TestReadMsgUDP_DeadlineTimeout tests ReadMsgUDP timeout during retry loop.
+func TestReadMsgUDP_DeadlineTimeout(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Set very short deadline - should timeout during retry loop
+	conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+
+	buf := make([]byte, 1024)
+	_, _, _, _, err = conn.ReadMsgUDP(buf, nil)
+	if err != ErrTimedOut {
+		t.Errorf("ReadMsgUDP timeout: expected ErrTimedOut, got %v", err)
+	}
+}
+
+// TestWriteMsgUDP_DeadlineExpired tests WriteMsgUDP when deadline is already expired.
+func TestWriteMsgUDP_DeadlineExpired(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Reduce send buffer to minimum to trigger would-block more easily
+	_ = SetSendBuffer(conn.fd, 1024)
+
+	destAddr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 65535}
+	data := make([]byte, 512)
+
+	// First, fill the send buffer without deadline to trigger would-block
+	for i := 0; i < 10000; i++ {
+		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+		if err == iox.ErrWouldBlock {
+			// Now we have a blocked socket - set expired deadline and try again
+			conn.SetWriteDeadline(time.Now().Add(-time.Second))
+			_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+			if err == ErrTimedOut {
+				// Successfully hit the expired deadline path
+				return
+			}
+			t.Logf("After would-block with expired deadline: %v", err)
+			return
+		}
+		if err != nil {
+			t.Logf("WriteMsgUDP iteration %d: %v", i, err)
+			break
+		}
+	}
+	// If we get here, we couldn't trigger would-block (UDP rarely blocks)
+	t.Log("WriteMsgUDP: could not trigger would-block path")
+}
+
+// TestWriteMsgUDP_DeadlineTimeoutInLoop tests WriteMsgUDP timeout during retry loop.
+func TestWriteMsgUDP_DeadlineTimeoutInLoop(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Reduce send buffer to minimum
+	_ = SetSendBuffer(conn.fd, 1024)
+
+	destAddr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 65535}
+	data := make([]byte, 512)
+
+	// Fill the send buffer first
+	for i := 0; i < 10000; i++ {
+		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+		if err == iox.ErrWouldBlock {
+			// Now set a short deadline and try to write - should timeout in retry loop
+			conn.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
+			_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+			if err == ErrTimedOut {
+				// Successfully hit the timeout-in-loop path
+				return
+			}
+			t.Logf("After would-block with short deadline: %v", err)
+			return
+		}
+		if err != nil {
+			t.Logf("WriteMsgUDP iteration %d: %v", i, err)
+			break
+		}
+	}
+	t.Log("WriteMsgUDP: could not trigger would-block path")
+}
+
+// TestWriteMsgUDP_AggressiveStress aggressively tries to trigger EAGAIN on UDP.
+// UDP rarely blocks because the kernel drops packets rather than returning EAGAIN.
+// This test attempts to trigger the condition but may not succeed on all systems.
+func TestWriteMsgUDP_AggressiveStress(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Set absolutely minimal send buffer
+	_ = SetSendBuffer(conn.fd, 1)
+
+	// Target a blackhole destination (TEST-NET-1, should not route)
+	destAddr := &UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 9}
+
+	// Large payload to fill buffer faster
+	data := make([]byte, 65507) // Max UDP payload
+
+	// Flood with maximum speed
+	for i := 0; i < 100000; i++ {
+		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+		if err == iox.ErrWouldBlock {
+			// Got EAGAIN - now test the deadline paths
+			t.Log("Triggered ErrWouldBlock, testing deadline paths")
+
+			// Test 1: No deadline set - should return immediately
+			_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+			if err == iox.ErrWouldBlock {
+				t.Log("Path 1: No deadline, returned ErrWouldBlock immediately")
+			}
+
+			// Test 2: Expired deadline
+			conn.SetWriteDeadline(time.Now().Add(-time.Second))
+			_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+			if err == ErrTimedOut {
+				t.Log("Path 2: Expired deadline returned ErrTimedOut")
+			}
+
+			// Test 3: Short deadline that expires in loop
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
+			_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
+			if err == ErrTimedOut {
+				t.Log("Path 3: Deadline expired in retry loop")
+			}
+			return
+		}
+		if err != nil && err != iox.ErrWouldBlock {
+			// Other errors are expected (network unreachable, etc.)
+			continue
+		}
+	}
+	t.Log("WriteMsgUDP: UDP does not block on this system (kernel drops packets)")
+}
+
+// TestWriteMsgUDP_DeadlineRetrySuccess tests WriteMsgUDP retry with deadline.
+func TestWriteMsgUDP_DeadlineRetrySuccess(t *testing.T) {
+	receiver, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer receiver.Close()
+
+	receiverAddr := receiver.LocalAddr().(*UDPAddr)
+
+	sender, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer sender.Close()
+
+	// Set a deadline
+	sender.SetWriteDeadline(time.Now().Add(time.Second))
+
+	// Normal write should succeed immediately (Strike path)
+	testData := []byte("write deadline test")
+	n, oobn, err := sender.WriteMsgUDP(testData, nil, receiverAddr)
+	if err != nil {
+		t.Fatalf("WriteMsgUDP: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("WriteMsgUDP: wrote %d bytes, want %d", n, len(testData))
+	}
+	if oobn != 0 {
+		t.Errorf("WriteMsgUDP: oobn = %d, want 0", oobn)
+	}
+
+	// Verify data received
+	buf := make([]byte, 1024)
+	receiver.SetReadDeadline(time.Now().Add(time.Second))
+	rn, _, _, _, err := receiver.ReadMsgUDP(buf, nil)
+	if err != nil {
+		t.Fatalf("ReadMsgUDP: %v", err)
+	}
+	if string(buf[:rn]) != string(testData) {
+		t.Errorf("Received %q, want %q", buf[:rn], testData)
 	}
 }
