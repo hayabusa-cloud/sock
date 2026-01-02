@@ -22,24 +22,10 @@ const (
 )
 
 // Iovec represents a single I/O vector for scatter/gather I/O.
-type Iovec struct {
-	Base *byte  // Starting address
-	Len  uint64 // Number of bytes
-}
+type Iovec = zcall.Iovec
 
 // Msghdr represents a message header for sendmsg/recvmsg.
-// Matches struct msghdr in Linux.
-type Msghdr struct {
-	Name       *byte  // Optional address
-	Namelen    uint32 // Size of address
-	_          [4]byte
-	Iov        *Iovec // Scatter/gather array
-	Iovlen     uint64 // # elements in iov
-	Control    *byte  // Ancillary data
-	Controllen uint64 // Ancillary data buffer len
-	Flags      int32  // Flags on received message
-	_          [4]byte
-}
+type Msghdr = zcall.Msghdr
 
 // Cmsghdr represents a control message header.
 // Matches struct cmsghdr in Linux.
@@ -49,7 +35,7 @@ type Cmsghdr struct {
 	Type  int32  // Protocol-specific type
 }
 
-// SizeofMsghdr is the size of Msghdr.
+// SizeofMsghdr is the size of zcall.Msghdr.
 const SizeofMsghdr = 56
 
 // SizeofCmsghdr is the size of Cmsghdr.
@@ -72,7 +58,7 @@ func CmsgLen(length int) int {
 
 // CmsgData returns a pointer to the data portion of a control message.
 func CmsgData(cmsg *Cmsghdr) unsafe.Pointer {
-	return unsafe.Pointer(uintptr(unsafe.Pointer(cmsg)) + SizeofCmsghdr)
+	return unsafe.Add(unsafe.Pointer(cmsg), SizeofCmsghdr)
 }
 
 // UnixRights creates a control message buffer for passing file descriptors.
@@ -120,7 +106,7 @@ func ParseUnixRights(buf []byte) []int {
 			dataLen := msgLen - SizeofCmsghdr
 			numFds := dataLen / 4
 			dataStart := p + SizeofCmsghdr
-			for i := 0; i < numFds; i++ {
+			for i := range numFds {
 				var fd int32
 				fdBytes := (*[4]byte)(unsafe.Pointer(&fd))
 				copy(fdBytes[:], buf[dataStart+i*4:dataStart+(i+1)*4])
