@@ -241,10 +241,15 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 
 // adaptiveConnect performs an adaptive connect operation.
 // If timeout is zero, returns immediately after first connect attempt (non-blocking).
-// If timeout is set, polls SO_ERROR with backoff until connected or timeout exceeded.
+// If timeout is set, probes connection status with backoff until connected or timeout.
 //
 // The connect operation for non-blocking sockets returns ErrInProgress on first call.
-// Subsequent polls check SO_ERROR to determine if connection completed.
+// Connection completion is detected via second connect() call:
+//   - Returns nil (EISCONN mapped to nil) when connected
+//   - Returns ErrInProgress (EALREADY) while handshake is in progress
+//   - Returns other errors if connection failed
+//
+// This approach works for both TCP (SOCK_STREAM) and SCTP (SOCK_SEQPACKET).
 //
 // Parameters:
 //   - sock: the socket to connect
@@ -279,19 +284,28 @@ func adaptiveConnect(sock *NetSocket, sa Sockaddr, timeout time.Duration) error 
 		return ErrTimedOut
 	}
 
-	// Adapt: poll SO_ERROR with backoff until deadline
+	// Adapt: probe with second connect() + backoff until deadline
+	// Second connect() on a connecting socket returns:
+	// - EISCONN (mapped to nil): connection established
+	// - EALREADY (mapped to ErrInProgress): still connecting
+	// - Other errors: connection failed (ECONNREFUSED, ETIMEDOUT, etc.)
 	var backoff iox.Backoff
 	for {
 		backoff.Wait()
 
-		// Check connection status via SO_ERROR
-		err = GetSocketError(sock.fd)
+		// Probe connection status via second connect()
+		// Linux kernel behavior (af_inet.c:735): when socket is TCP_CLOSE,
+		// connect() calls sock_error() which atomically returns sk_err and
+		// clears it. This gives us the actual error directly without needing
+		// to check SO_ERROR separately.
+		err = sock.Connect(sa)
 		if err == nil {
-			return nil // Connected
+			return nil // Connected (EISCONN mapped to nil)
 		}
 		if err != ErrInProgress {
-			return err // Connection failed with error
+			return err // Connection failed with specific error
 		}
+		// err == ErrInProgress (EALREADY): still connecting, continue backoff
 
 		if time.Now().UnixNano() >= deadlineNs {
 			return ErrTimedOut
