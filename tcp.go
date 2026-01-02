@@ -23,6 +23,7 @@ type TCPSocket struct {
 	*NetSocket
 }
 
+// NewTCPSocket4 creates a new IPv4 TCP socket with SO_REUSEADDR, SO_REUSEPORT, and SO_ZEROCOPY.
 func NewTCPSocket4() (*TCPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, zcall.IPPROTO_TCP)
 	if err != nil {
@@ -35,6 +36,7 @@ func NewTCPSocket4() (*TCPSocket, error) {
 	return &TCPSocket{NetSocket: sock}, nil
 }
 
+// NewTCPSocket6 creates a new IPv6 TCP socket with SO_REUSEADDR, SO_REUSEPORT, and SO_ZEROCOPY.
 func NewTCPSocket6() (*TCPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET6, zcall.SOCK_STREAM, zcall.IPPROTO_TCP)
 	if err != nil {
@@ -262,6 +264,8 @@ func (d *TCPDialer) Dial(network string, laddr, raddr *TCPAddr) (*TCPConn, error
 	return d.Dial6(laddr, raddr)
 }
 
+// ListenTCP4 creates a TCP listener on an IPv4 address.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenTCP4(laddr *TCPAddr) (*TCPListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -289,6 +293,8 @@ func ListenTCP4(laddr *TCPAddr) (*TCPListener, error) {
 	return &TCPListener{TCPSocket: sock, laddr: actualLaddr}, nil
 }
 
+// ListenTCP6 creates a TCP listener on an IPv6 address.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenTCP6(laddr *TCPAddr) (*TCPListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -316,6 +322,8 @@ func ListenTCP6(laddr *TCPAddr) (*TCPListener, error) {
 	return &TCPListener{TCPSocket: sock, laddr: actualLaddr}, nil
 }
 
+// ListenTCP creates a TCP listener, auto-detecting IPv4/IPv6 based on network and address.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenTCP(network string, laddr *TCPAddr) (*TCPListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam

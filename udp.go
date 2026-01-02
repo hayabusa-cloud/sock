@@ -21,6 +21,7 @@ type UDPSocket struct {
 	*NetSocket
 }
 
+// NewUDPSocket4 creates a new IPv4 UDP socket with SO_REUSEADDR, SO_REUSEPORT, and SO_ZEROCOPY.
 func NewUDPSocket4() (*UDPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_DGRAM, zcall.IPPROTO_UDP)
 	if err != nil {
@@ -33,6 +34,7 @@ func NewUDPSocket4() (*UDPSocket, error) {
 	return &UDPSocket{NetSocket: sock}, nil
 }
 
+// NewUDPSocket6 creates a new IPv6 UDP socket with SO_REUSEADDR, SO_REUSEPORT, and SO_ZEROCOPY.
 func NewUDPSocket6() (*UDPSocket, error) {
 	sock, err := NewNetSocket(zcall.AF_INET6, zcall.SOCK_DGRAM, zcall.IPPROTO_UDP)
 	if err != nil {
@@ -175,6 +177,8 @@ func (c *UDPConn) GetBroadcast() (bool, error) {
 	return v != 0, err
 }
 
+// ListenUDP4 creates a bound IPv4 UDP socket.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenUDP4(laddr *UDPAddr) (*UDPConn, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -198,6 +202,8 @@ func ListenUDP4(laddr *UDPAddr) (*UDPConn, error) {
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr}, nil
 }
 
+// ListenUDP6 creates a bound IPv6 UDP socket.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenUDP6(laddr *UDPAddr) (*UDPConn, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -221,6 +227,8 @@ func ListenUDP6(laddr *UDPAddr) (*UDPConn, error) {
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr}, nil
 }
 
+// ListenUDP creates a bound UDP socket, auto-detecting IPv4/IPv6 based on network and address.
+// Returns ErrInvalidParam if laddr is nil.
 func ListenUDP(network string, laddr *UDPAddr) (*UDPConn, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -231,6 +239,8 @@ func ListenUDP(network string, laddr *UDPAddr) (*UDPConn, error) {
 	return ListenUDP6(laddr)
 }
 
+// DialUDP4 creates a connected IPv4 UDP socket.
+// Returns ErrInvalidParam if raddr is nil.
 func DialUDP4(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
@@ -261,6 +271,8 @@ func DialUDP4(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr, raddr: raddr}, nil
 }
 
+// DialUDP6 creates a connected IPv6 UDP socket.
+// Returns ErrInvalidParam if raddr is nil.
 func DialUDP6(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
@@ -291,6 +303,8 @@ func DialUDP6(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr, raddr: raddr}, nil
 }
 
+// DialUDP creates a connected UDP socket, auto-detecting IPv4/IPv6 based on network and address.
+// Returns ErrInvalidParam if raddr is nil.
 func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
