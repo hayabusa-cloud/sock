@@ -9,7 +9,6 @@ package sock
 import (
 	"unsafe"
 
-	"code.hybscloud.com/iofd"
 	"code.hybscloud.com/zcall"
 )
 
@@ -26,14 +25,4 @@ func accept4(fd int, addr unsafe.Pointer, addrlen unsafe.Pointer) (int, error) {
 		return -1, errFromErrno(errno)
 	}
 	return int(nfd), nil
-}
-
-// setNonBlockCloexec sets O_NONBLOCK and FD_CLOEXEC on a file descriptor.
-// On Linux, this is typically not needed as we use SOCK_NONBLOCK|SOCK_CLOEXEC
-// in socket() and accept4(), but provided for completeness.
-func setNonBlockCloexec(fd *iofd.FD) error {
-	if err := SetNonBlock(fd, true); err != nil {
-		return err
-	}
-	return SetCloseOnExec(fd, true)
 }
