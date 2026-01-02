@@ -294,16 +294,16 @@ func adaptiveConnect(sock *NetSocket, sa Sockaddr, timeout time.Duration) error 
 		backoff.Wait()
 
 		// Probe connection status via second connect()
+		// Linux kernel behavior (af_inet.c:735): when socket is TCP_CLOSE,
+		// connect() calls sock_error() which atomically returns sk_err and
+		// clears it. This gives us the actual error directly without needing
+		// to check SO_ERROR separately.
 		err = sock.Connect(sa)
 		if err == nil {
 			return nil // Connected (EISCONN mapped to nil)
 		}
 		if err != ErrInProgress {
-			// Connection failed - check SO_ERROR for actual error
-			if sockErr := GetSocketError(sock.fd); sockErr != nil {
-				return sockErr
-			}
-			return err
+			return err // Connection failed with specific error
 		}
 		// err == ErrInProgress (EALREADY): still connecting, continue backoff
 
