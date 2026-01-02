@@ -37,9 +37,9 @@ if err == ErrInProgress { /* async connect */ }
 
 ### Unsafe Pointer Usage
 ```go
-// Direct syscall pointers - intentional, zero-copy design
-zcall.Read(fd, unsafe.Pointer(&buf[0]), len)
-unsafe.Add(ptr, offset)  // Go 1.17+ idiom
+// Direct syscall usage - intentional, zero-copy design
+zcall.Read(uintptr(fd), buf)  // buf is []byte
+unsafe.Add(ptr, offset)       // Go 1.17+ idiom
 ```
 
 ### Build Tags
