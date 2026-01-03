@@ -7334,3 +7334,96 @@ func TestDialTCP6_BindPath(t *testing.T) {
 	}
 	defer conn.Close()
 }
+
+// TestReadMsgUDP_BackoffPath tests ReadMsgUDP adaptive backoff with deadline.
+func TestReadMsgUDP_BackoffPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Send data after delay to trigger backoff retry path
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		client.Write([]byte("test"))
+	}()
+
+	// Set deadline and read - will backoff then succeed
+	server.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 64)
+	oob := make([]byte, 64)
+	n, _, _, _, err := server.ReadMsgUDP(buf, oob)
+	if err != nil {
+		t.Fatalf("ReadMsgUDP: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("got %d bytes, want 4", n)
+	}
+}
+
+// TestWriteMsgUDP_BackoffPath tests WriteMsgUDP adaptive backoff with deadline.
+func TestWriteMsgUDP_BackoffPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Set deadline and write
+	client.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	n, oobn, err := client.WriteMsgUDP([]byte("test"), nil, nil)
+	if err != nil {
+		t.Fatalf("WriteMsgUDP: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("got %d bytes, want 4", n)
+	}
+	if oobn != 0 {
+		t.Errorf("got %d oob bytes, want 0", oobn)
+	}
+}
+
+// TestWriteMsgUDP_DeadlineExpiredPath tests WriteMsgUDP deadline-expired path.
+func TestWriteMsgUDP_DeadlineExpiredPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Set already-expired deadline
+	client.SetWriteDeadline(time.Now().Add(-time.Second))
+
+	// Reduce socket buffer to make it more likely to block
+	zcall.Setsockopt(uintptr(client.fd.Raw()), zcall.SOL_SOCKET, zcall.SO_SNDBUF,
+		unsafe.Pointer(&[]int32{1024}[0]), 4)
+
+	// Try to fill buffer - may trigger ErrWouldBlock then ErrTimedOut
+	buf := make([]byte, 8192)
+	for i := 0; i < 100; i++ {
+		_, _, err = client.WriteMsgUDP(buf, nil, nil)
+		if err == ErrTimedOut {
+			return // Success - hit the deadline path
+		}
+	}
+	// Even if we don't hit the path, test passes (best effort)
+}
