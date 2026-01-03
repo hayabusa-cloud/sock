@@ -77,7 +77,7 @@ El paquete implementa el modelo **Strike-Spin-Adapt** para I/O no bloqueante:
 
 1. **Strike**: Ejecución directa de syscall (no bloqueante)
 2. **Spin**: Sincronización a nivel de hardware (manejada por `sox` si es necesario)
-3. **Adapt**: Backoff por software via `iox.Backoff` cuando se establecen deadlines
+3. **Adapt**: Backoff de software ajustado para red cuando se establecen deadlines
 
 **Comportamientos clave:**
 
