@@ -16,12 +16,12 @@ import (
 // Adaptive I/O implements the Strike-Spin-Adapt model:
 //  1. Strike: Direct syscall (non-blocking) → returns iox.ErrWouldBlock if not ready.
 //  2. Spin: (handled by caller if needed via sox.SpinWait)
-//  3. Adapt: Software backoff (iox.Backoff) → used when deadline is set.
+//  3. Adapt: Software backoff (netBackoff) → used when deadline is set.
 //
 // Contract:
 //   - By default, operations are non-blocking and return iox.ErrWouldBlock immediately.
 //   - Only when a deadline is explicitly set does the operation enter a retry loop.
-//   - The retry loop uses iox.Backoff for progressive sleeping with jitter.
+//   - The retry loop uses netBackoff for network-tuned progressive sleeping with jitter.
 
 // deadlineState holds read and write deadlines for adaptive I/O.
 // Zero time means no deadline (non-blocking mode).
@@ -134,12 +134,13 @@ func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, err
 	}
 
 	// Adapt: retry with backoff until deadline
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		n, err = readFn()
 		if err != iox.ErrWouldBlock {
+			backoff.done()
 			return n, err
 		}
 
@@ -179,12 +180,13 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 	}
 
 	// Adapt: retry with backoff until deadline
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		n, err = writeFn()
 		if err != iox.ErrWouldBlock {
+			backoff.done()
 			return n, err
 		}
 
@@ -224,12 +226,13 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 	}
 
 	// Adapt: retry with backoff until deadline
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		result, err = acceptFn()
 		if err != iox.ErrWouldBlock {
+			backoff.done()
 			return result, err
 		}
 
@@ -289,9 +292,9 @@ func adaptiveConnect(sock *NetSocket, sa Sockaddr, timeout time.Duration) error 
 	// - EISCONN (mapped to nil): connection established
 	// - EALREADY (mapped to ErrInProgress): still connecting
 	// - Other errors: connection failed (ECONNREFUSED, ETIMEDOUT, etc.)
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		// Probe connection status via second connect()
 		// Linux kernel behavior (af_inet.c:735): when socket is TCP_CLOSE,
@@ -300,9 +303,11 @@ func adaptiveConnect(sock *NetSocket, sa Sockaddr, timeout time.Duration) error 
 		// to check SO_ERROR separately.
 		err = sock.Connect(sa)
 		if err == nil {
+			backoff.done()
 			return nil // Connected (EISCONN mapped to nil)
 		}
 		if err != ErrInProgress {
+			backoff.done()
 			return err // Connection failed with specific error
 		}
 		// err == ErrInProgress (EALREADY): still connecting, continue backoff

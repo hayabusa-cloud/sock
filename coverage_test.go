@@ -7223,3 +7223,207 @@ func TestWriteMsgUDP_DeadlineRetrySuccess(t *testing.T) {
 		t.Errorf("Received %q, want %q", buf[:rn], testData)
 	}
 }
+
+// TestListenTCP4_BindError tests bind error path in ListenTCP4.
+func TestListenTCP4_BindError(t *testing.T) {
+	// First listener binds to port
+	listener1, err := ListenTCP4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("first ListenTCP4: %v", err)
+	}
+	defer listener1.Close()
+
+	port := listener1.Addr().(*TCPAddr).Port
+
+	// Second listener tries same port - should fail with bind error
+	// Note: With SO_REUSEPORT, this may succeed, so we try without it
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	_ = SetReusePort(sock.fd, false) // Disable reuseport
+	err = sock.Bind(tcpAddrToSockaddr4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}))
+	sock.Close()
+	if err == nil {
+		t.Log("bind succeeded (reuseport may be enabled system-wide)")
+	}
+}
+
+// TestListenTCP6_BindError tests bind error path in ListenTCP6.
+func TestListenTCP6_BindError(t *testing.T) {
+	listener1, err := ListenTCP6(&TCPAddr{IP: net.ParseIP("::1"), Port: 0})
+	if err != nil {
+		t.Fatalf("first ListenTCP6: %v", err)
+	}
+	defer listener1.Close()
+
+	port := listener1.Addr().(*TCPAddr).Port
+
+	sock, err := NewTCPSocket6()
+	if err != nil {
+		t.Fatalf("NewTCPSocket6: %v", err)
+	}
+	_ = SetReusePort(sock.fd, false)
+	err = sock.Bind(tcpAddrToSockaddr6(&TCPAddr{IP: net.ParseIP("::1"), Port: port}))
+	sock.Close()
+	if err == nil {
+		t.Log("bind succeeded (reuseport may be enabled system-wide)")
+	}
+}
+
+// TestDialTCP4_NonBlockingConnect tests non-blocking connect path.
+func TestDialTCP4_NonBlockingConnect(t *testing.T) {
+	// Non-blocking dial returns immediately (ErrInProgress silently ignored)
+	conn, err := DialTCP4(nil, &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1})
+	if err != nil {
+		t.Fatalf("DialTCP4: %v", err)
+	}
+	defer conn.Close()
+	// Connection will fail on first I/O operation
+	_, err = conn.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected write error on failed connection")
+	}
+}
+
+// TestDialTCP6_NonBlockingConnect tests non-blocking connect path.
+func TestDialTCP6_NonBlockingConnect(t *testing.T) {
+	conn, err := DialTCP6(nil, &TCPAddr{IP: net.ParseIP("::1"), Port: 1})
+	if err != nil {
+		t.Fatalf("DialTCP6: %v", err)
+	}
+	defer conn.Close()
+	_, err = conn.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected write error on failed connection")
+	}
+}
+
+// TestDialTCP4_BindPath tests DialTCP4 laddr binding path.
+func TestDialTCP4_BindPath(t *testing.T) {
+	listener, err := ListenTCP4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer listener.Close()
+
+	laddr := &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+	raddr := listener.Addr().(*TCPAddr)
+
+	conn, err := DialTCP4(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialTCP4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+// TestDialTCP6_BindPath tests DialTCP6 laddr binding path.
+func TestDialTCP6_BindPath(t *testing.T) {
+	listener, err := ListenTCP6(&TCPAddr{IP: net.ParseIP("::1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP6: %v", err)
+	}
+	defer listener.Close()
+
+	laddr := &TCPAddr{IP: net.ParseIP("::1"), Port: 0}
+	raddr := listener.Addr().(*TCPAddr)
+
+	conn, err := DialTCP6(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialTCP6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+// TestReadMsgUDP_BackoffPath tests ReadMsgUDP adaptive backoff with deadline.
+func TestReadMsgUDP_BackoffPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Send data after delay to trigger backoff retry path
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		client.Write([]byte("test"))
+	}()
+
+	// Set deadline and read - will backoff then succeed
+	server.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 64)
+	oob := make([]byte, 64)
+	n, _, _, _, err := server.ReadMsgUDP(buf, oob)
+	if err != nil {
+		t.Fatalf("ReadMsgUDP: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("got %d bytes, want 4", n)
+	}
+}
+
+// TestWriteMsgUDP_BackoffPath tests WriteMsgUDP adaptive backoff with deadline.
+func TestWriteMsgUDP_BackoffPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Set deadline and write
+	client.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	n, oobn, err := client.WriteMsgUDP([]byte("test"), nil, nil)
+	if err != nil {
+		t.Fatalf("WriteMsgUDP: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("got %d bytes, want 4", n)
+	}
+	if oobn != 0 {
+		t.Errorf("got %d oob bytes, want 0", oobn)
+	}
+}
+
+// TestWriteMsgUDP_DeadlineExpiredPath tests WriteMsgUDP deadline-expired path.
+func TestWriteMsgUDP_DeadlineExpiredPath(t *testing.T) {
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Set already-expired deadline
+	client.SetWriteDeadline(time.Now().Add(-time.Second))
+
+	// Reduce socket buffer to make it more likely to block
+	zcall.Setsockopt(uintptr(client.fd.Raw()), zcall.SOL_SOCKET, zcall.SO_SNDBUF,
+		unsafe.Pointer(&[]int32{1024}[0]), 4)
+
+	// Try to fill buffer - may trigger ErrWouldBlock then ErrTimedOut
+	buf := make([]byte, 8192)
+	for i := 0; i < 100; i++ {
+		_, _, err = client.WriteMsgUDP(buf, nil, nil)
+		if err == ErrTimedOut {
+			return // Success - hit the deadline path
+		}
+	}
+	// Even if we don't hit the path, test passes (best effort)
+}

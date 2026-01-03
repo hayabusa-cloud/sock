@@ -25,7 +25,7 @@
 //
 //  1. Strike: Direct syscall execution (non-blocking)
 //  2. Spin: Hardware-level synchronization (handled by caller if needed)
-//  3. Adapt: Software backoff via [iox.Backoff] when deadlines are set
+//  3. Adapt: Network-tuned software backoff when deadlines are set
 //
 // By default, operations are non-blocking:
 //

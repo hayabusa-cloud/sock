@@ -43,12 +43,13 @@ func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 	}
 
 	// Adapt: retry with backoff until deadline
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		n, oobn, flags, addr, err = c.readMsgUDP(b, oob)
 		if err != iox.ErrWouldBlock {
+			backoff.done()
 			return
 		}
 
@@ -120,12 +121,13 @@ func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err er
 	}
 
 	// Adapt: retry with backoff until deadline
-	var backoff iox.Backoff
+	var backoff netBackoff
 	for {
-		backoff.Wait()
+		backoff.wait()
 
 		n, oobn, err = c.writeMsgUDP(b, oob, addr)
 		if err != iox.ErrWouldBlock {
+			backoff.done()
 			return
 		}
 
