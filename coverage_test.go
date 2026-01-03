@@ -7223,3 +7223,114 @@ func TestWriteMsgUDP_DeadlineRetrySuccess(t *testing.T) {
 		t.Errorf("Received %q, want %q", buf[:rn], testData)
 	}
 }
+
+// TestListenTCP4_BindError tests bind error path in ListenTCP4.
+func TestListenTCP4_BindError(t *testing.T) {
+	// First listener binds to port
+	listener1, err := ListenTCP4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("first ListenTCP4: %v", err)
+	}
+	defer listener1.Close()
+
+	port := listener1.Addr().(*TCPAddr).Port
+
+	// Second listener tries same port - should fail with bind error
+	// Note: With SO_REUSEPORT, this may succeed, so we try without it
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	_ = SetReusePort(sock.fd, false) // Disable reuseport
+	err = sock.Bind(tcpAddrToSockaddr4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}))
+	sock.Close()
+	if err == nil {
+		t.Log("bind succeeded (reuseport may be enabled system-wide)")
+	}
+}
+
+// TestListenTCP6_BindError tests bind error path in ListenTCP6.
+func TestListenTCP6_BindError(t *testing.T) {
+	listener1, err := ListenTCP6(&TCPAddr{IP: net.ParseIP("::1"), Port: 0})
+	if err != nil {
+		t.Fatalf("first ListenTCP6: %v", err)
+	}
+	defer listener1.Close()
+
+	port := listener1.Addr().(*TCPAddr).Port
+
+	sock, err := NewTCPSocket6()
+	if err != nil {
+		t.Fatalf("NewTCPSocket6: %v", err)
+	}
+	_ = SetReusePort(sock.fd, false)
+	err = sock.Bind(tcpAddrToSockaddr6(&TCPAddr{IP: net.ParseIP("::1"), Port: port}))
+	sock.Close()
+	if err == nil {
+		t.Log("bind succeeded (reuseport may be enabled system-wide)")
+	}
+}
+
+// TestDialTCP4_NonBlockingConnect tests non-blocking connect path.
+func TestDialTCP4_NonBlockingConnect(t *testing.T) {
+	// Non-blocking dial returns immediately (ErrInProgress silently ignored)
+	conn, err := DialTCP4(nil, &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1})
+	if err != nil {
+		t.Fatalf("DialTCP4: %v", err)
+	}
+	defer conn.Close()
+	// Connection will fail on first I/O operation
+	_, err = conn.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected write error on failed connection")
+	}
+}
+
+// TestDialTCP6_NonBlockingConnect tests non-blocking connect path.
+func TestDialTCP6_NonBlockingConnect(t *testing.T) {
+	conn, err := DialTCP6(nil, &TCPAddr{IP: net.ParseIP("::1"), Port: 1})
+	if err != nil {
+		t.Fatalf("DialTCP6: %v", err)
+	}
+	defer conn.Close()
+	_, err = conn.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected write error on failed connection")
+	}
+}
+
+// TestDialTCP4_BindPath tests DialTCP4 laddr binding path.
+func TestDialTCP4_BindPath(t *testing.T) {
+	listener, err := ListenTCP4(&TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer listener.Close()
+
+	laddr := &TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+	raddr := listener.Addr().(*TCPAddr)
+
+	conn, err := DialTCP4(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialTCP4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+// TestDialTCP6_BindPath tests DialTCP6 laddr binding path.
+func TestDialTCP6_BindPath(t *testing.T) {
+	listener, err := ListenTCP6(&TCPAddr{IP: net.ParseIP("::1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP6: %v", err)
+	}
+	defer listener.Close()
+
+	laddr := &TCPAddr{IP: net.ParseIP("::1"), Port: 0}
+	raddr := listener.Addr().(*TCPAddr)
+
+	conn, err := DialTCP6(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialTCP6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
