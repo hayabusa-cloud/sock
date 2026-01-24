@@ -209,6 +209,68 @@ func TestSendRecvMultipleFDs(t *testing.T) {
 	}
 }
 
+func TestSendRecvManyFDs(t *testing.T) {
+	// Test >8 FDs to exercise heap allocation fallback path.
+	// scmRightsStackSize = 48 bytes = CmsgSpace(8*4), so 10 FDs triggers fallback.
+
+	// Create Unix socket pair
+	var fds [2]int32
+	errno := zcall.Socketpair(zcall.AF_UNIX, zcall.SOCK_STREAM, 0, &fds)
+	if errno != 0 {
+		t.Fatalf("Socketpair failed: %v", zcall.Errno(errno))
+	}
+	fd0 := iofd.NewFD(int(fds[0]))
+	fd1 := iofd.NewFD(int(fds[1]))
+	defer fd0.Close()
+	defer fd1.Close()
+
+	// Create 10 temporary files (>8 to trigger heap fallback)
+	const numFDs = 10
+	tmpfiles := make([]*os.File, numFDs)
+	sendFds := make([]int, numFDs)
+	for i := range numFDs {
+		tmpfile, err := os.CreateTemp("", "scm_rights_many_test")
+		if err != nil {
+			t.Fatalf("CreateTemp failed: %v", err)
+		}
+		defer os.Remove(tmpfile.Name())
+		tmpfiles[i] = tmpfile
+		sendFds[i] = int(tmpfile.Fd())
+	}
+
+	// Send all 10 file descriptors
+	n, err := sock.SendFDs(&fd0, sendFds, []byte("x"))
+	if err != nil {
+		t.Fatalf("SendFDs failed: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("SendFDs returned %d, want 1", n)
+	}
+
+	// Receive the file descriptors
+	buf := make([]byte, 1)
+	n, recvFds, err := sock.RecvFDs(&fd1, buf, numFDs)
+	if err != nil {
+		t.Fatalf("RecvFDs failed: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("RecvFDs returned %d bytes, want 1", n)
+	}
+	if len(recvFds) != numFDs {
+		t.Fatalf("RecvFDs returned %d fds, want %d", len(recvFds), numFDs)
+	}
+
+	// Clean up received fds
+	for _, fd := range recvFds {
+		zcall.Close(uintptr(fd))
+	}
+
+	// Clean up tmpfiles
+	for _, f := range tmpfiles {
+		f.Close()
+	}
+}
+
 func TestUnixCredentials(t *testing.T) {
 	cred := sock.Ucred{
 		Pid: 1234,
