@@ -120,12 +120,18 @@ func ParseUnixRights(buf []byte) []int {
 	return fds
 }
 
+// scmRightsStackSize is the stack buffer size for ≤8 file descriptors.
+// CmsgSpace(8*4) = CmsgAlign(16+32) = 48 bytes.
+const scmRightsStackSize = 48
+
 // SendFDs sends file descriptors over a Unix socket.
 // The data parameter can be empty but at least 1 byte is typically sent.
 func SendFDs(fd *iofd.FD, fds []int, data []byte) (int, error) {
+	// Stack buffer for dummy byte when no data provided
+	var dummy [1]byte
 	if len(data) == 0 {
 		// sendmsg requires at least some data
-		data = []byte{0}
+		data = dummy[:]
 	}
 
 	iov := Iovec{
@@ -133,7 +139,28 @@ func SendFDs(fd *iofd.FD, fds []int, data []byte) (int, error) {
 		Len:  uint64(len(data)),
 	}
 
-	cmsgBuf := UnixRights(fds...)
+	// Stack buffer for common case (≤8 FDs)
+	datalen := len(fds) * 4
+	buflen := CmsgSpace(datalen)
+	var stackBuf [scmRightsStackSize]byte
+	var cmsgBuf []byte
+	if buflen <= len(stackBuf) {
+		cmsgBuf = stackBuf[:buflen]
+	} else {
+		cmsgBuf = make([]byte, buflen)
+	}
+
+	cmsg := (*Cmsghdr)(unsafe.Pointer(&cmsgBuf[0]))
+	cmsg.Len = uint64(CmsgLen(datalen))
+	cmsg.Level = SOL_SOCKET
+	cmsg.Type = SCM_RIGHTS
+
+	// Copy file descriptors into the data portion
+	dataOffset := SizeofCmsghdr
+	for i, fdVal := range fds {
+		fdBytes := (*[4]byte)(unsafe.Pointer(&fdVal))
+		copy(cmsgBuf[dataOffset+i*4:dataOffset+(i+1)*4], fdBytes[:])
+	}
 
 	msg := Msghdr{
 		Iov:        &iov,
@@ -152,8 +179,10 @@ func SendFDs(fd *iofd.FD, fds []int, data []byte) (int, error) {
 // RecvFDs receives file descriptors from a Unix socket.
 // Returns the received data, file descriptors, and any error.
 func RecvFDs(fd *iofd.FD, dataBuf []byte, maxFDs int) (int, []int, error) {
+	// Stack buffer for dummy byte when no data buffer provided
+	var dummy [1]byte
 	if len(dataBuf) == 0 {
-		dataBuf = make([]byte, 1)
+		dataBuf = dummy[:]
 	}
 
 	iov := Iovec{
@@ -161,7 +190,15 @@ func RecvFDs(fd *iofd.FD, dataBuf []byte, maxFDs int) (int, []int, error) {
 		Len:  uint64(len(dataBuf)),
 	}
 
-	cmsgBuf := make([]byte, CmsgSpace(maxFDs*4))
+	// Stack buffer for common case (≤8 FDs)
+	buflen := CmsgSpace(maxFDs * 4)
+	var stackBuf [scmRightsStackSize]byte
+	var cmsgBuf []byte
+	if buflen <= len(stackBuf) {
+		cmsgBuf = stackBuf[:buflen]
+	} else {
+		cmsgBuf = make([]byte, buflen)
+	}
 
 	msg := Msghdr{
 		Iov:        &iov,
