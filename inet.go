@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
+// Refactored from sox (code.hybscloud.com/sox).
+
 package sock
 
 import (
@@ -122,43 +124,64 @@ func ResolveSCTPAddr(network, address string) (*SCTPAddr, error) {
 	default:
 		return nil, UnknownNetworkError(network)
 	}
-	var want6 bool
-	if network == "sctp" || network == "sctp6" {
-		want6 = true
-	}
-	if network == "sctp" && strings.ContainsAny(address, ":[") {
-		want6 = true
-	}
+
+	// Try parsing as addr:port literal first
 	if addrPort, err := netip.ParseAddrPort(address); err == nil {
-		if addrPort.Addr().Is6() && want6 {
+		if addrPort.Addr().Is6() && network != "sctp4" {
 			return SCTPAddrFromAddrPort(addrPort), nil
 		}
 		if addrPort.Addr().Is4() && network != "sctp6" {
 			return SCTPAddrFromAddrPort(addrPort), nil
 		}
+		return nil, &AddrError{Err: "no suitable address found", Addr: address}
 	}
-	addrList, err := net.DefaultResolver.LookupAddr(context.Background(), address)
+
+	// Split host:port for DNS resolution
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		// No port, treat entire address as host with port 0
+		host = address
+		portStr = "0"
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, &AddrError{Err: "invalid port", Addr: portStr}
+	}
+	if port < 0 || port > 65535 {
+		return nil, &AddrError{Err: "invalid port", Addr: portStr}
+	}
+
+	// Forward DNS lookup (hostname → IP)
+	ips, err := net.DefaultResolver.LookupHost(context.Background(), host)
 	if err != nil {
 		return nil, err
 	}
-	var addr4 *SCTPAddr = nil
-	for _, addr := range addrList {
-		addrPort, err := netip.ParseAddrPort(addr)
-		if err != nil {
+
+	want6 := network == "sctp" || network == "sctp6"
+	var addr4 *SCTPAddr
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
 			continue
 		}
-		if want6 && addrPort.Addr().Is6() {
-			return SCTPAddrFromAddrPort(addrPort), nil
-		}
-		if addr4 == nil && addrPort.Addr().Is4() {
-			addr4 = SCTPAddrFromAddrPort(addrPort)
-			if !want6 {
-				return addr4, nil
+		if ip.To4() != nil {
+			if network != "sctp6" {
+				if !want6 {
+					return &SCTPAddr{IP: ip, Port: port}, nil
+				}
+				if addr4 == nil {
+					addr4 = &SCTPAddr{IP: ip, Port: port}
+				}
 			}
+		} else if want6 {
+			return &SCTPAddr{IP: ip, Port: port}, nil
 		}
 	}
 
-	return addr4, nil
+	if addr4 != nil {
+		return addr4, nil
+	}
+	return nil, &AddrError{Err: "no suitable address found", Addr: address}
 }
 
 // IPAddrFromTCPAddr returns a new IPAddr based on the given TCPAddr.
