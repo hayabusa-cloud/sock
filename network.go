@@ -91,45 +91,45 @@ func (c *rawConn) Control(f func(fd uintptr)) error {
 
 // Read invokes f on the underlying file descriptor for reading.
 // If f returns true, Read returns nil. If f returns false, Read
-// retries in a tight loop until f returns true or the fd is closed.
+// retries with network-tuned backoff until f returns true or the fd is closed.
 //
-// WARNING: This implements busy-wait semantics for non-blocking sockets.
-// The function f should return true on EAGAIN if immediate return is acceptable,
-// otherwise this will spin indefinitely consuming CPU. For event-driven I/O,
-// use io_uring or epoll integration instead of this interface.
+// The callback should return true when data is transferred (≥1 byte),
+// false when no data is available. Partial transfers should return true;
+// buffering is handled at higher layers.
 func (c *rawConn) Read(f func(fd uintptr) (done bool)) error {
+	var backoff netBackoff
 	for {
 		raw := c.fd.Raw()
 		if raw < 0 {
 			return ErrClosed
 		}
 		if f(uintptr(raw)) {
+			backoff.done()
 			return nil
 		}
-		// For non-blocking FDs, yield and retry
-		// The caller's f should return true when EAGAIN is acceptable
+		backoff.wait()
 	}
 }
 
 // Write invokes f on the underlying file descriptor for writing.
 // If f returns true, Write returns nil. If f returns false, Write
-// retries in a tight loop until f returns true or the fd is closed.
+// retries with network-tuned backoff until f returns true or the fd is closed.
 //
-// WARNING: This implements busy-wait semantics for non-blocking sockets.
-// The function f should return true on EAGAIN if immediate return is acceptable,
-// otherwise this will spin indefinitely consuming CPU. For event-driven I/O,
-// use io_uring or epoll integration instead of this interface.
+// The callback should return true when data is transferred (≥1 byte),
+// false when no data is available. Partial transfers should return true;
+// buffering is handled at higher layers.
 func (c *rawConn) Write(f func(fd uintptr) (done bool)) error {
+	var backoff netBackoff
 	for {
 		raw := c.fd.Raw()
 		if raw < 0 {
 			return ErrClosed
 		}
 		if f(uintptr(raw)) {
+			backoff.done()
 			return nil
 		}
-		// For non-blocking FDs, yield and retry
-		// The caller's f should return true when EAGAIN is acceptable
+		backoff.wait()
 	}
 }
 
