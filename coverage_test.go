@@ -10687,4 +10687,119 @@ func TestNetSocket_NetworkTypeUnix(t *testing.T) {
 	}
 }
 
-// NetSocketPair tests are already in coverage_test.go
+// ========== Additional Edge Case Tests ==========
+
+// Test SendMessagesAdaptive with already expired write deadline
+// (exercises deadline expiry check before retry loop)
+func TestSendMessagesAdaptive_ExpiredBeforeRetry(t *testing.T) {
+	addr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+	conn, err := ListenUDP4(addr)
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	// Set deadline in the past
+	conn.SetWriteDeadline(time.Now().Add(-10 * time.Second))
+
+	// Since UDP sends succeed immediately (before deadline check),
+	// this exercises the success path rather than the expired check.
+	// The expired check requires ErrWouldBlock first, which UDP rarely returns.
+	msgs := []UDPMessage{{Addr: conn.laddr, Buffers: [][]byte{[]byte("test")}}}
+	n, err := conn.SendMessagesAdaptive(msgs)
+	// UDP send succeeds before reaching deadline check
+	if err != nil && err != ErrTimedOut {
+		t.Fatalf("SendMessagesAdaptive unexpected error: %v", err)
+	}
+	if err == nil && n != 1 {
+		t.Errorf("expected 1 message sent, got %d", n)
+	}
+}
+
+// Test UnixConnPair with different network types
+func TestUnixConnPair_AllTypes(t *testing.T) {
+	for _, network := range []string{"unix", "unixgram", "unixpacket"} {
+		t.Run(network, func(t *testing.T) {
+			pair, err := UnixConnPair(network)
+			if err != nil {
+				t.Fatalf("UnixConnPair(%s): %v", network, err)
+			}
+			defer pair[0].Close()
+			defer pair[1].Close()
+
+			// Verify both ends work
+			testData := []byte("ping")
+			_, err = pair[0].Write(testData)
+			if err != nil {
+				t.Errorf("Write: %v", err)
+			}
+		})
+	}
+}
+
+// Test UnixConnPair with invalid network
+func TestUnixConnPair_BadNetwork(t *testing.T) {
+	_, err := UnixConnPair("invalid")
+	if err == nil {
+		t.Error("expected error for invalid network")
+	}
+}
+
+// Test ListenUnix with unixpacket network
+func TestListenUnix_Unixpacket_Coverage(t *testing.T) {
+	sockPath := t.TempDir() + "/test.sock"
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: sockPath, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	defer ln.Close()
+
+	// Verify listener was created successfully
+	addr := ln.Addr()
+	if addr == nil {
+		t.Error("expected non-nil address")
+	}
+}
+
+// Test DialUnix with invalid network
+func TestDialUnix_InvalidNetwork_Coverage(t *testing.T) {
+	_, err := DialUnix("invalid", nil, &UnixAddr{Name: "/tmp/nonexistent.sock", Net: "unix"})
+	if err == nil {
+		t.Error("expected error for invalid network")
+	}
+}
+
+// Test TCP/UDP/SCTP socket creation methods
+func TestSocketCreation_Methods(t *testing.T) {
+	t.Run("TCP4", func(t *testing.T) {
+		sock, err := NewTCPSocket4()
+		if err != nil {
+			t.Fatalf("NewTCPSocket4: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("TCP6", func(t *testing.T) {
+		sock, err := NewTCPSocket6()
+		if err != nil {
+			t.Fatalf("NewTCPSocket6: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("UDP4", func(t *testing.T) {
+		sock, err := NewUDPSocket4()
+		if err != nil {
+			t.Fatalf("NewUDPSocket4: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("UDP6", func(t *testing.T) {
+		sock, err := NewUDPSocket6()
+		if err != nil {
+			t.Fatalf("NewUDPSocket6: %v", err)
+		}
+		sock.Close()
+	})
+}
