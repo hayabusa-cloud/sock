@@ -4,6 +4,22 @@
 
 //go:build linux
 
+// SCTP (Stream Control Transmission Protocol) socket implementation.
+//
+// Platform: Linux-only. This file is constrained by //go:build linux.
+// SCTP requires the Linux kernel SCTP module to be loaded (modprobe sctp).
+// Darwin and FreeBSD do not have native kernel SCTP support.
+//
+// SCTP provides reliable, message-oriented transport with features including:
+//   - Multi-streaming: Multiple independent streams within a single association
+//   - Multi-homing: Multiple IP addresses per endpoint for redundancy
+//   - Message boundaries: Preserves application message boundaries (unlike TCP)
+//   - Ordered and unordered delivery modes
+//
+// Two socket modes are supported:
+//   - SOCK_SEQPACKET (one-to-many): Single socket handles multiple associations
+//   - SOCK_STREAM (one-to-one): TCP-like semantics with single association
+
 package sock
 
 import (

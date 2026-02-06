@@ -342,8 +342,8 @@ func DialUnix(network string, laddr, raddr *UnixAddr) (*UnixConn, error) {
 	return &UnixConn{UnixSocket: sock, laddr: laddr, raddr: raddr}, nil
 }
 
-// UnixSocketPair creates a pair of connected Unix domain sockets.
-// network must be "unix" or "unixgram".
+// UnixConnPair creates a pair of connected Unix domain sockets.
+// network must be "unix", "unixgram", or "unixpacket".
 func UnixConnPair(network string) ([2]*UnixConn, error) {
 	var typ int
 	switch network {
