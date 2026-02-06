@@ -184,6 +184,39 @@ sock.SetRecvBuffer(conn.FD(), 256*1024)
 
 // SO_LINGER 用于关闭时立即发送 RST
 sock.SetLinger(conn.FD(), true, 0)
+
+// TCP_USER_TIMEOUT 用于检测死连接（Linux）
+sock.SetTCPUserTimeout(conn.FD(), 30000)  // 30秒（毫秒）
+
+// TCP_NOTSENT_LOWAT 减少内存和延迟（Linux）
+sock.SetTCPNotsentLowat(conn.FD(), 16384)
+
+// SO_BUSY_POLL 低延迟轮询（Linux）
+sock.SetBusyPoll(conn.FD(), 50)  // 50微秒
+```
+
+### UDP 批量操作（Linux）
+
+```go
+// 单次系统调用发送多条消息
+msgs := []sock.UDPMessage{
+    {Addr: addr1, Buffers: [][]byte{data1}},
+    {Addr: addr2, Buffers: [][]byte{data2}},
+}
+n, _ := conn.SendMessages(msgs)
+
+// 接收多条消息
+recvMsgs := []sock.UDPMessage{
+    {Buffers: [][]byte{make([]byte, 1500)}},
+    {Buffers: [][]byte{make([]byte, 1500)}},
+}
+n, _ = conn.RecvMessages(recvMsgs)
+
+// UDP GSO（通用分段卸载）
+sock.SetUDPSegment(conn.FD(), 1400)  // 分段大小
+
+// UDP GRO（通用接收卸载）
+sock.SetUDPGRO(conn.FD(), true)
 ```
 
 ### 错误处理
