@@ -379,8 +379,8 @@ func decodeUnixAddr(raw *RawSockaddrAny, addrlen uint32) *UnixAddr {
 	su := (*RawSockaddrUnix)(unsafe.Pointer(raw))
 
 	// Calculate path length from kernel-provided addrlen
-	// addrlen = sizeof(sa_family_t) + path_bytes
-	// sa_family_t is 2 bytes on Linux
+	// addrlen = 2 (header) + path_bytes
+	// Header: sa_family_t (2 bytes) on Linux, sa_len+sa_family (1+1) on BSD
 	if addrlen < 2 {
 		return &UnixAddr{Name: "", Net: "unix"}
 	}
