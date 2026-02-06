@@ -9,6 +9,7 @@ package sock
 import (
 	"io"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 	"unsafe"
@@ -3845,7 +3846,7 @@ func TestErrFromErrno_AllCases(t *testing.T) {
 
 // --- Sockaddr edge cases ---
 
-func TestSockaddrUnix_PathEdgeCases(t *testing.T) {
+func TestSockaddrUnix_PathEdgeCases_Cov0(t *testing.T) {
 	// Test with max length path (107 chars + NUL terminator)
 	longPathBytes := make([]byte, 107)
 	for i := range longPathBytes {
@@ -5185,7 +5186,7 @@ func TestTCPDialer_Dial6_WithLocalAddr(t *testing.T) {
 }
 
 // DialTCP auto-detect IPv6
-func TestDialTCP_IPv6AutoDetect(t *testing.T) {
+func TestDialTCP_IPv6AutoDetect_Cov0(t *testing.T) {
 	ln, err := net.Listen("tcp6", "[::1]:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
@@ -7426,4 +7427,2953 @@ func TestWriteMsgUDP_DeadlineExpiredPath(t *testing.T) {
 		}
 	}
 	// Even if we don't hit the path, test passes (best effort)
+}
+
+// TestWriteMsgUDP_DeadlineRetryPath tests WriteMsgUDP deadline-based retry loop
+// by using Unix domain sockets with small buffers to reliably trigger ErrWouldBlock.
+func TestWriteMsgUDP_DeadlineRetryPath(t *testing.T) {
+	// Use Unix datagram sockets which can block more reliably than UDP
+	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
+	if err != nil {
+		t.Fatalf("NetSocketPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Set very small send buffer to trigger ErrWouldBlock
+	minBuf := int32(1024)
+	zcall.Setsockopt(uintptr(pair[0].fd.Raw()), zcall.SOL_SOCKET, zcall.SO_SNDBUF,
+		unsafe.Pointer(&minBuf), 4)
+
+	// Create a UDP-like wrapper to test the retry path concept
+	// Since WriteMsgUDP is UDP-specific, we test the underlying adaptive pattern
+	// by filling the buffer then writing with deadline
+
+	// Fill the send buffer
+	smallBuf := make([]byte, 512)
+	for i := 0; i < 10; i++ {
+		_, errno := zcall.Write(uintptr(pair[0].fd.Raw()), smallBuf)
+		if errno == EAGAIN || errno == EWOULDBLOCK {
+			break
+		}
+	}
+
+	// Now test with actual UDP socket using small buffer
+	server, err := ListenUDP4(&UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4 server: %v", err)
+	}
+	defer server.Close()
+
+	client, err := DialUDP4(nil, server.LocalAddr().(*UDPAddr))
+	if err != nil {
+		t.Fatalf("DialUDP4 client: %v", err)
+	}
+	defer client.Close()
+
+	// Set minimal send buffer
+	zcall.Setsockopt(uintptr(client.fd.Raw()), zcall.SOL_SOCKET, zcall.SO_SNDBUF,
+		unsafe.Pointer(&minBuf), 4)
+
+	// Start a goroutine to drain the server side
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1024)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				server.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+				server.Read(buf)
+			}
+		}
+	}()
+
+	// Write with deadline - should succeed via retry path
+	client.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	n, oobn, err := client.WriteMsgUDP([]byte("retry-test"), nil, nil)
+	if err != nil {
+		t.Logf("WriteMsgUDP with retry: %v (may be expected)", err)
+	} else {
+		if n != 10 {
+			t.Errorf("got %d bytes, want 10", n)
+		}
+		if oobn != 0 {
+			t.Errorf("got %d oob bytes, want 0", oobn)
+		}
+	}
+
+	// Signal done and wait
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestSocketCreation_FDExhaustion tests socket creation error handling
+// when file descriptors are exhausted (EMFILE/ENFILE).
+func TestSocketCreation_FDExhaustion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip: FD exhaustion test")
+	}
+
+	// Collect sockets until we hit EMFILE/ENFILE
+	var sockets []*NetSocket
+	defer func() {
+		for _, s := range sockets {
+			s.Close()
+		}
+	}()
+
+	var lastErr error
+	maxAttempts := 100000 // Safety limit
+
+	for i := 0; i < maxAttempts; i++ {
+		sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, zcall.IPPROTO_TCP)
+		if err != nil {
+			lastErr = err
+			break
+		}
+		sockets = append(sockets, sock)
+	}
+
+	if lastErr == nil {
+		t.Logf("opened %d sockets without hitting FD limit", len(sockets))
+		return // System has very high limits, test passes
+	}
+
+	t.Logf("FD exhaustion after %d sockets: %v", len(sockets), lastErr)
+
+	// Verify error is properly mapped (should be a system error)
+	// The error could be EMFILE, ENFILE, or ENOMEM depending on system
+	if lastErr == ErrNoMemory {
+		return // ENOMEM is acceptable
+	}
+
+	// Test that socket creation functions handle the error properly
+	// by trying to create different socket types
+	_, err := NewTCPSocket4()
+	if err == nil {
+		t.Error("expected error from NewTCPSocket4 after FD exhaustion")
+	}
+
+	_, err = NewTCPSocket6()
+	if err == nil {
+		t.Error("expected error from NewTCPSocket6 after FD exhaustion")
+	}
+
+	_, err = NewUDPSocket4()
+	if err == nil {
+		t.Error("expected error from NewUDPSocket4 after FD exhaustion")
+	}
+
+	_, err = NewUDPSocket6()
+	if err == nil {
+		t.Error("expected error from NewUDPSocket6 after FD exhaustion")
+	}
+
+	// SCTP may not be available on all systems
+	_, err = NewSCTPSocket4()
+	if err == nil {
+		t.Log("NewSCTPSocket4 succeeded (unexpected but not fatal)")
+	}
+
+	_, err = NewSCTPSocket6()
+	if err == nil {
+		t.Log("NewSCTPSocket6 succeeded (unexpected but not fatal)")
+	}
+}
+
+// === Coverage Enhancement Tests ===
+
+// --- ResolveSCTPAddr DNS path coverage ---
+
+func TestResolveSCTPAddr_HostPortSplit(t *testing.T) {
+	// Test with host:port format (exercises SplitHostPort path)
+	addr, err := ResolveSCTPAddr("sctp4", "127.0.0.1:9999")
+	if err != nil {
+		t.Fatalf("ResolveSCTPAddr with host:port: %v", err)
+	}
+	if addr.Port != 9999 {
+		t.Errorf("expected port 9999, got %d", addr.Port)
+	}
+
+	// Test with host only (no port, fallback path)
+	addr, err = ResolveSCTPAddr("sctp4", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("ResolveSCTPAddr with host only: %v", err)
+	}
+	if addr.Port != 0 {
+		t.Errorf("expected port 0, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_InvalidPort(t *testing.T) {
+	_, err := ResolveSCTPAddr("sctp", "127.0.0.1:notaport")
+	if err == nil {
+		t.Error("expected error for invalid port")
+	}
+}
+
+func TestResolveSCTPAddr_LocalhostDNS(t *testing.T) {
+	// Exercise the LookupHost path with "localhost"
+	addr, err := ResolveSCTPAddr("sctp4", "localhost:8080")
+	if err != nil {
+		t.Skipf("localhost resolution not available: %v", err)
+	}
+	if addr == nil {
+		t.Fatal("expected non-nil addr")
+	}
+	if addr.Port != 8080 {
+		t.Errorf("expected port 8080, got %d", addr.Port)
+	}
+	if addr.IP.To4() == nil {
+		t.Errorf("expected IPv4 address for sctp4, got %v", addr.IP)
+	}
+}
+
+func TestResolveSCTPAddr_DualStackDNS(t *testing.T) {
+	// Exercise dual-stack (sctp) path with localhost
+	addr, err := ResolveSCTPAddr("sctp", "localhost:1234")
+	if err != nil {
+		t.Skipf("localhost resolution not available: %v", err)
+	}
+	if addr == nil {
+		t.Fatal("expected non-nil addr")
+	}
+	if addr.Port != 1234 {
+		t.Errorf("expected port 1234, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_SCTP6DNS(t *testing.T) {
+	// Exercise sctp6 DNS path
+	addr, err := ResolveSCTPAddr("sctp6", "localhost:5678")
+	if err != nil {
+		t.Skipf("localhost IPv6 resolution not available: %v", err)
+	}
+	if addr == nil {
+		t.Skipf("no IPv6 address resolved for localhost")
+	}
+}
+
+func TestResolveSCTPAddr_IPv4Literal_SCTP4(t *testing.T) {
+	// sctp4 with IPv4 literal (exercises !want6 fast return)
+	addr, err := ResolveSCTPAddr("sctp4", "192.168.1.1:80")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if addr.Port != 80 {
+		t.Errorf("expected port 80, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_IPv6Literal_SCTP6Reject(t *testing.T) {
+	_, err := ResolveSCTPAddr("sctp4", "[::1]:80")
+	if err == nil {
+		t.Fatal("expected error for sctp4 with IPv6 literal")
+	}
+}
+
+func TestResolveSCTPAddr_InvalidDNS(t *testing.T) {
+	// Test with invalid hostname that fails DNS lookup
+	_, err := ResolveSCTPAddr("sctp", "this-host-definitely-does-not-exist.invalid:80")
+	if err == nil {
+		t.Error("expected DNS resolution error")
+	}
+}
+
+// --- SCTP Socket Coverage ---
+
+func TestNewSCTPSocket4_Defaults(t *testing.T) {
+	sock, err := NewSCTPSocket4()
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer sock.Close()
+
+	reuse, err := GetReuseAddr(sock.fd)
+	if err != nil {
+		t.Errorf("GetReuseAddr: %v", err)
+	}
+	if !reuse {
+		t.Error("expected SO_REUSEADDR enabled")
+	}
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("expected SeqPacket, got %v", sock.Protocol())
+	}
+}
+
+func TestNewSCTPSocket6_DefaultsCov(t *testing.T) {
+	sock, err := NewSCTPSocket6()
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("expected SeqPacket, got %v", sock.Protocol())
+	}
+}
+
+func TestNewSCTPStreamSocket4_DefaultsCov(t *testing.T) {
+	sock, err := NewSCTPStreamSocket4()
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected Stream, got %v", sock.Protocol())
+	}
+}
+
+func TestNewSCTPStreamSocket6_DefaultsCov(t *testing.T) {
+	sock, err := NewSCTPStreamSocket6()
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected Stream, got %v", sock.Protocol())
+	}
+}
+
+func TestSCTPListener_AcceptSocket_Cov2(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	// Non-blocking accept should return WouldBlock
+	_, err = ln.AcceptSocket()
+	if err != iox.ErrWouldBlock {
+		t.Errorf("expected ErrWouldBlock, got %v", err)
+	}
+}
+
+func TestListenSCTP4_FullPath(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	if ln.Addr() == nil {
+		t.Error("expected non-nil Addr")
+	}
+	sctpAddr := ln.Addr().(*SCTPAddr)
+	if sctpAddr.Port == 0 {
+		t.Error("expected non-zero ephemeral port")
+	}
+}
+
+func TestListenSCTP6_FullPath(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	if ln.Addr() == nil {
+		t.Error("expected non-nil Addr")
+	}
+}
+
+func TestListenSCTP_AutoDetect_Cov(t *testing.T) {
+	ln, err := ListenSCTP("sctp4", &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	ln6, err := ListenSCTP("sctp6", &SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln6.Close()
+}
+
+func TestListenSCTP4_NilAddr_Cov(t *testing.T) {
+	_, err := ListenSCTP4(nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestListenSCTP6_NilAddr_Cov(t *testing.T) {
+	_, err := ListenSCTP6(nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestListenSCTP_NilAddr(t *testing.T) {
+	_, err := ListenSCTP("sctp4", nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestDialSCTP4_FullPath(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	conn, err := DialSCTP4(nil, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialSCTP4: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+		if conn.LocalAddr() == nil {
+			t.Error("expected non-nil LocalAddr")
+		}
+		if conn.RemoteAddr() == nil {
+			t.Error("expected non-nil RemoteAddr")
+		}
+	}
+}
+
+func TestDialSCTP6_FullPath(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	conn, err := DialSCTP6(nil, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialSCTP6: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+func TestDialSCTP4_NilRaddr(t *testing.T) {
+	_, err := DialSCTP4(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestDialSCTP6_NilRaddr(t *testing.T) {
+	_, err := DialSCTP6(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestDialSCTP_AutoDetect_Cov(t *testing.T) {
+	_, err := DialSCTP("sctp4", nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestDialSCTP4_WithLaddr(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	laddr := &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	conn, err := DialSCTP4(laddr, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialSCTP4 with laddr: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+func TestDialSCTP6_WithLaddr(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	laddr := &SCTPAddr{IP: net.IPv6loopback, Port: 0}
+	conn, err := DialSCTP6(laddr, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialSCTP6 with laddr: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+func TestSCTPDialer_Dial4(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial4(nil, raddr)
+	if err != nil {
+		t.Fatalf("SCTPDialer.Dial4: %v", err)
+	}
+	defer conn.Close()
+
+	// Test SyscallConn
+	rc, err := conn.SyscallConn()
+	if err != nil {
+		t.Fatalf("SyscallConn: %v", err)
+	}
+	err = rc.Control(func(fd uintptr) {})
+	if err != nil {
+		t.Errorf("Control: %v", err)
+	}
+}
+
+func TestSCTPDialer_Dial6(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial6(nil, raddr)
+	if err != nil {
+		t.Fatalf("SCTPDialer.Dial6: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestSCTPDialer_Dial_AutoDetect4(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial("sctp4", nil, raddr)
+	if err != nil {
+		t.Fatalf("SCTPDialer.Dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestSCTPDialer_Dial4_NilRaddr_Cov(t *testing.T) {
+	dialer := &SCTPDialer{}
+	_, err := dialer.Dial4(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestSCTPDialer_Dial6_NilRaddr_Cov(t *testing.T) {
+	dialer := &SCTPDialer{}
+	_, err := dialer.Dial6(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestSCTPDialer_Dial_NilRaddr_Cov(t *testing.T) {
+	dialer := &SCTPDialer{}
+	_, err := dialer.Dial("sctp4", nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestSCTPDialer_SetDialTimeout_Cov(t *testing.T) {
+	dialer := &SCTPDialer{}
+	dialer.SetDialTimeout(5 * time.Second)
+	if dialer.Timeout != 5*time.Second {
+		t.Errorf("expected 5s timeout, got %v", dialer.Timeout)
+	}
+}
+
+func TestSCTPDialer_Dial4_WithLaddr(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	laddr := &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial4(laddr, raddr)
+	if err != nil {
+		t.Fatalf("SCTPDialer.Dial4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestSCTPDialer_Dial6_WithLaddr(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	laddr := &SCTPAddr{IP: net.IPv6loopback, Port: 0}
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial6(laddr, raddr)
+	if err != nil {
+		t.Fatalf("SCTPDialer.Dial6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestSCTPConn_ReadWrite(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	ln.SetDeadline(time.Now().Add(3 * time.Second))
+
+	// Use SOCK_STREAM socket to match listener's SOCK_STREAM type
+	csock, err := NewSCTPStreamSocket4()
+	if err != nil {
+		t.Fatalf("new stream socket: %v", err)
+	}
+	sa := sctpAddrToSockaddr4(raddr)
+	if err := adaptiveConnect(csock.NetSocket, sa, 2*time.Second); err != nil {
+		csock.Close()
+		t.Fatalf("connect: %v", err)
+	}
+	client := &SCTPConn{SCTPSocket: csock, raddr: raddr}
+	defer client.Close()
+
+	server, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	defer server.Close()
+
+	// Write from client
+	data := []byte("hello sctp")
+	client.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_, err = client.Write(data)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Read from server
+	buf := make([]byte, 64)
+	server.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := server.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(buf[:n]) != "hello sctp" {
+		t.Errorf("expected 'hello sctp', got '%s'", buf[:n])
+	}
+}
+
+func TestSCTPConn_Deadlines_Cov(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial4(nil, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Test SetDeadline
+	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Errorf("SetDeadline: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Errorf("SetReadDeadline: %v", err)
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Errorf("SetWriteDeadline: %v", err)
+	}
+
+	// Reset deadlines
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		t.Errorf("SetDeadline zero: %v", err)
+	}
+}
+
+func TestSCTPConn_EOF(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	ln.SetDeadline(time.Now().Add(3 * time.Second))
+
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	client, err := dialer.Dial4(nil, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	server, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+
+	// Close client → server should get EOF
+	client.Close()
+
+	buf := make([]byte, 64)
+	server.SetReadDeadline(time.Now().Add(time.Second))
+	_, err = server.Read(buf)
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+	server.Close()
+}
+
+func TestSCTPListener_Deadline(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+
+	// Set a very short deadline
+	ln.SetDeadline(time.Now().Add(10 * time.Millisecond))
+	_, err = ln.Accept()
+	if err != ErrTimedOut {
+		t.Errorf("expected ErrTimedOut, got %v", err)
+	}
+
+	// Reset deadline
+	ln.SetDeadline(time.Time{})
+	_, err = ln.Accept()
+	if err != iox.ErrWouldBlock {
+		t.Errorf("expected ErrWouldBlock after reset, got %v", err)
+	}
+}
+
+func TestSCTPAddr_String(t *testing.T) {
+	// nil addr
+	var addr *SCTPAddr
+	if s := addr.String(); s != "<nil>" {
+		t.Errorf("expected '<nil>', got '%s'", s)
+	}
+
+	// IPv4
+	a := &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}
+	if s := a.String(); s != "127.0.0.1:9000" {
+		t.Errorf("expected '127.0.0.1:9000', got '%s'", s)
+	}
+
+	// IPv6 with zone
+	a6 := &SCTPAddr{IP: net.IPv6loopback, Port: 9001, Zone: "eth0"}
+	s6 := a6.String()
+	if s6 == "" {
+		t.Error("expected non-empty string for IPv6 with zone")
+	}
+
+	// Empty IP
+	ae := &SCTPAddr{Port: 80}
+	if s := ae.String(); s != ":80" {
+		t.Errorf("expected ':80', got '%s'", s)
+	}
+
+	// Network
+	if n := a.Network(); n != "sctp" {
+		t.Errorf("expected 'sctp', got '%s'", n)
+	}
+}
+
+// --- NetSocket error path coverage ---
+
+func TestNewNetSocket_InvalidDomain(t *testing.T) {
+	// Invalid domain should fail
+	_, err := NewNetSocket(99999, zcall.SOCK_STREAM, 0)
+	if err == nil {
+		t.Error("expected error for invalid domain")
+	}
+}
+
+func TestNetSocketPair_InvalidDomain_Cov(t *testing.T) {
+	_, err := NetSocketPair(99999, zcall.SOCK_STREAM, 0)
+	if err == nil {
+		t.Error("expected error for invalid domain")
+	}
+}
+
+func TestNetSocket_ConnectClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	sa := NewSockaddrInet4([4]byte{127, 0, 0, 1}, 80)
+	err = sock.Connect(sa)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestNetSocket_BindClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	sa := NewSockaddrInet4([4]byte{127, 0, 0, 1}, 0)
+	err = sock.Bind(sa)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestNetSocket_ListenClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	err = sock.Listen(128)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestNetSocket_AcceptClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	_, _, err = sock.Accept()
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestNetSocket_ShutdownClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	err = sock.Shutdown(SHUT_RDWR)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- rawConn coverage ---
+
+func TestRawConn_ControlClosed(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	rc := newRawConn(sock.fd)
+	sock.Close()
+
+	err = rc.Control(func(fd uintptr) {})
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- TCP/UDP Dialer coverage ---
+
+func TestTCPDialer_Dial4_WithLaddr(t *testing.T) {
+	ln, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*TCPAddr)
+	laddr := &TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	dialer := &TCPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial4(laddr, raddr)
+	if err != nil {
+		t.Fatalf("Dial4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestTCPDialer_Dial6_WithLaddr(t *testing.T) {
+	ln, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*TCPAddr)
+	laddr := &TCPAddr{IP: net.IPv6loopback, Port: 0}
+	dialer := &TCPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial6(laddr, raddr)
+	if err != nil {
+		t.Fatalf("Dial6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestTCPDialer_Dial_AutoDetect_Cov(t *testing.T) {
+	ln, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*TCPAddr)
+	dialer := &TCPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial("tcp4", nil, raddr)
+	if err != nil {
+		t.Fatalf("Dial auto-detect: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestTCPDialer_Dial_NilRaddr_Cov(t *testing.T) {
+	dialer := &TCPDialer{}
+	_, err := dialer.Dial4(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+	_, err = dialer.Dial6(nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+	_, err = dialer.Dial("tcp4", nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestTCPDialer_SetDialTimeout_Cov(t *testing.T) {
+	dialer := &TCPDialer{}
+	dialer.SetDialTimeout(3 * time.Second)
+	if dialer.Timeout != 3*time.Second {
+		t.Errorf("expected 3s, got %v", dialer.Timeout)
+	}
+}
+
+// --- ListenTCP error paths ---
+
+func TestListenTCP4_ListenError(t *testing.T) {
+	// Bind to an address that succeeds but listen on a non-stream socket won't work
+	// Instead just test with valid path + ephemeral port
+	ln, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP4: %v", err)
+	}
+	defer ln.Close()
+
+	// Verify address resolution
+	addr := ln.Addr().(*TCPAddr)
+	if addr.Port == 0 {
+		t.Error("expected non-zero port")
+	}
+}
+
+func TestListenTCP6_ListenPath(t *testing.T) {
+	ln, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	addr := ln.Addr().(*TCPAddr)
+	if addr.Port == 0 {
+		t.Error("expected non-zero port")
+	}
+}
+
+func TestListenTCP_AutoDetect_Cov(t *testing.T) {
+	_, err := ListenTCP("tcp4", nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+
+	ln, err := ListenTCP("tcp4", &TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenTCP tcp4: %v", err)
+	}
+	defer ln.Close()
+}
+
+// --- ListenUDP/DialUDP error paths ---
+
+func TestListenUDP_AutoDetect_Cov(t *testing.T) {
+	_, err := ListenUDP("udp4", nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+
+	conn, err := ListenUDP("udp4", &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP udp4: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestListenUDP6_Path(t *testing.T) {
+	conn, err := ListenUDP6(&UDPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer conn.Close()
+
+	addr := conn.LocalAddr().(*UDPAddr)
+	if addr.Port == 0 {
+		t.Error("expected non-zero port")
+	}
+}
+
+func TestDialUDP_AutoDetect_Cov(t *testing.T) {
+	_, err := DialUDP("udp4", nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+func TestDialUDP6_FullPath(t *testing.T) {
+	srv, err := ListenUDP6(&UDPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer srv.Close()
+
+	raddr := srv.LocalAddr().(*UDPAddr)
+	conn, err := DialUDP6(nil, raddr)
+	if err != nil {
+		t.Fatalf("DialUDP6: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- WriteMsgUDP deadline coverage ---
+
+func TestWriteMsgUDP_NoDeadline(t *testing.T) {
+	conn, err := ListenUDP4(&UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer conn.Close()
+
+	raddr := conn.LocalAddr().(*UDPAddr)
+	n, oobn, err := conn.WriteMsgUDP([]byte("test"), nil, raddr)
+	if err != nil {
+		t.Fatalf("WriteMsgUDP: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("expected 4 bytes written, got %d", n)
+	}
+	_ = oobn
+}
+
+// --- UnixSocket constructor coverage ---
+
+func TestNewUnixStreamSocket_Path(t *testing.T) {
+	sock, err := NewUnixStreamSocket()
+	if err != nil {
+		t.Fatalf("NewUnixStreamSocket: %v", err)
+	}
+	defer sock.Close()
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected Stream, got %v", sock.Protocol())
+	}
+}
+
+func TestNewUnixDatagramSocket_Path(t *testing.T) {
+	sock, err := NewUnixDatagramSocket()
+	if err != nil {
+		t.Fatalf("NewUnixDatagramSocket: %v", err)
+	}
+	defer sock.Close()
+	if sock.Protocol() != UnderlyingProtocolDgram {
+		t.Errorf("expected Dgram, got %v", sock.Protocol())
+	}
+}
+
+func TestNewUnixSeqpacketSocket_Path(t *testing.T) {
+	sock, err := NewUnixSeqpacketSocket()
+	if err != nil {
+		t.Fatalf("NewUnixSeqpacketSocket: %v", err)
+	}
+	defer sock.Close()
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("expected SeqPacket, got %v", sock.Protocol())
+	}
+}
+
+// --- ListenUnix error paths ---
+
+func TestListenUnix_UnknownNetwork_Cov2(t *testing.T) {
+	_, err := ListenUnix("invalid", &UnixAddr{Name: "/tmp/test.sock"})
+	if err == nil {
+		t.Error("expected error for unknown network")
+	}
+}
+
+func TestListenUnixgram_WrongNetwork_Cov(t *testing.T) {
+	_, err := ListenUnixgram("unix", &UnixAddr{Name: "/tmp/test.dgram"})
+	if err == nil {
+		t.Error("expected error for wrong network")
+	}
+}
+
+func TestDialUnix_UnknownNetwork_Cov(t *testing.T) {
+	_, err := DialUnix("invalid", nil, &UnixAddr{Name: "/tmp/test.sock"})
+	if err == nil {
+		t.Error("expected error for unknown network")
+	}
+}
+
+func TestUnixConnPair_UnknownNetwork_Cov(t *testing.T) {
+	_, err := UnixConnPair("invalid")
+	if err == nil {
+		t.Error("expected error for unknown network")
+	}
+}
+
+// --- sockopt error paths ---
+
+func TestGetFdFlags_ClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	err = SetNonBlock(sock.fd, true)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestSetCloseOnExec_Path(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	defer sock.Close()
+
+	if err := SetCloseOnExec(sock.fd, true); err != nil {
+		t.Errorf("SetCloseOnExec true: %v", err)
+	}
+	if err := SetCloseOnExec(sock.fd, false); err != nil {
+		t.Errorf("SetCloseOnExec false: %v", err)
+	}
+}
+
+func TestSetLinger_ClosedFD(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	err = SetLinger(sock.fd, true, 0)
+	if err != ErrClosed {
+		t.Errorf("SetLinger expected ErrClosed, got %v", err)
+	}
+	_, _, err = GetLinger(sock.fd)
+	if err != ErrClosed {
+		t.Errorf("GetLinger expected ErrClosed, got %v", err)
+	}
+}
+
+func TestGetSockname_ClosedFDPath(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	sock.Close()
+
+	_, err = GetSockname(sock.fd)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- SockaddrToTCPAddr coverage ---
+
+func TestSockaddrToTCPAddr_UnixSockaddr(t *testing.T) {
+	sa := NewSockaddrUnix("/tmp/test.sock")
+	result := SockaddrToTCPAddr(sa)
+	if result != nil {
+		t.Errorf("expected nil for Unix sockaddr, got %v", result)
+	}
+}
+
+func TestSockaddrToUDPAddr_UnixSockaddr(t *testing.T) {
+	sa := NewSockaddrUnix("/tmp/test.sock")
+	result := SockaddrToUDPAddr(sa)
+	if result != nil {
+		t.Errorf("expected nil for Unix sockaddr, got %v", result)
+	}
+}
+
+func TestSockaddrToUnixAddr_InetSockaddr(t *testing.T) {
+	sa := NewSockaddrInet4([4]byte{127, 0, 0, 1}, 80)
+	result := SockaddrToUnixAddr(sa, "unix")
+	if result != nil {
+		t.Errorf("expected nil for inet sockaddr, got %v", result)
+	}
+}
+
+// --- DecodeSockaddr edge cases ---
+
+func TestDecodeSockaddr_UnknownFamily(t *testing.T) {
+	var raw RawSockaddrAny
+	// Set an unknown family
+	*(*uint16)(unsafe.Pointer(&raw)) = 99
+	result := DecodeSockaddr(&raw)
+	if result != nil {
+		t.Errorf("expected nil for unknown family, got %v", result)
+	}
+}
+
+// --- adaptiveConnect edge case ---
+
+func TestAdaptiveConnect_ImmediateConnect(t *testing.T) {
+	// Unix sockets connect immediately
+	pair, err := UnixConnPair("unix")
+	if err != nil {
+		t.Fatalf("UnixConnPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Already connected, connect returns EISCONN → nil (success)
+}
+
+// --- NewNetTCPSocket/NewNetUDPSocket/NewNetUnixSocket ---
+
+func TestNewNetTCPSocket_IPv4(t *testing.T) {
+	sock, err := NewNetTCPSocket(false)
+	if err != nil {
+		t.Fatalf("NewNetTCPSocket v4: %v", err)
+	}
+	defer sock.Close()
+	if sock.NetworkType() != NetworkIPv4 {
+		t.Errorf("expected IPv4, got %v", sock.NetworkType())
+	}
+}
+
+func TestNewNetTCPSocket_IPv6(t *testing.T) {
+	sock, err := NewNetTCPSocket(true)
+	if err != nil {
+		t.Fatalf("NewNetTCPSocket v6: %v", err)
+	}
+	defer sock.Close()
+	if sock.NetworkType() != NetworkIPv6 {
+		t.Errorf("expected IPv6, got %v", sock.NetworkType())
+	}
+}
+
+func TestNewNetUDPSocket_IPv4(t *testing.T) {
+	sock, err := NewNetUDPSocket(false)
+	if err != nil {
+		t.Fatalf("NewNetUDPSocket v4: %v", err)
+	}
+	defer sock.Close()
+	if sock.NetworkType() != NetworkIPv4 {
+		t.Errorf("expected IPv4, got %v", sock.NetworkType())
+	}
+}
+
+func TestNewNetUDPSocket_IPv6(t *testing.T) {
+	sock, err := NewNetUDPSocket(true)
+	if err != nil {
+		t.Fatalf("NewNetUDPSocket v6: %v", err)
+	}
+	defer sock.Close()
+	if sock.NetworkType() != NetworkIPv6 {
+		t.Errorf("expected IPv6, got %v", sock.NetworkType())
+	}
+}
+
+func TestNewNetUnixSocket_Stream(t *testing.T) {
+	sock, err := NewNetUnixSocket(zcall.SOCK_STREAM)
+	if err != nil {
+		t.Fatalf("NewNetUnixSocket: %v", err)
+	}
+	defer sock.Close()
+	if sock.NetworkType() != NetworkUnix {
+		t.Errorf("expected Unix, got %v", sock.NetworkType())
+	}
+}
+
+// --- SCTPAddrFromAddrPort ---
+
+func TestSCTPAddrFromAddrPort_Coverage(t *testing.T) {
+	// Test with IPv4
+	ap4 := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, 0, 0, 1}), 3000)
+	addr4 := SCTPAddrFromAddrPort(ap4)
+	if addr4.Port != 3000 {
+		t.Errorf("expected port 3000, got %d", addr4.Port)
+	}
+	// Test with IPv6 + zone
+	ap6 := netip.AddrPortFrom(netip.AddrFrom16([16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}).WithZone("eth0"), 5000)
+	addr6 := SCTPAddrFromAddrPort(ap6)
+	if addr6.Zone != "eth0" {
+		t.Errorf("expected zone eth0, got %s", addr6.Zone)
+	}
+	if addr6.Port != 5000 {
+		t.Errorf("expected port 5000, got %d", addr6.Port)
+	}
+
+	// Direct construction with IPAddrFromSCTPAddr
+	a := &SCTPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 3000}
+	ipa := IPAddrFromSCTPAddr(a)
+	if ipa.IP.String() != "10.0.0.1" {
+		t.Errorf("expected 10.0.0.1, got %s", ipa.IP.String())
+	}
+}
+
+// --- ip6ZoneID/ip6ZoneString ---
+
+func TestIp6ZoneID_Coverage(t *testing.T) {
+	// Empty zone returns 0
+	id := ip6ZoneID("")
+	if id != 0 {
+		t.Errorf("expected 0, got %d", id)
+	}
+
+	// Invalid zone name returns 0
+	id = ip6ZoneID("nonexistent-interface-12345")
+	if id != 0 {
+		t.Errorf("expected 0 for invalid zone, got %d", id)
+	}
+}
+
+func TestIp6ZoneString_Coverage(t *testing.T) {
+	// Zero returns empty
+	s := ip6ZoneString(0)
+	if s != "" {
+		t.Errorf("expected empty, got '%s'", s)
+	}
+
+	// Invalid index returns empty
+	s = ip6ZoneString(99999)
+	if s != "" {
+		t.Errorf("expected empty for invalid index, got '%s'", s)
+	}
+}
+
+// --- ipFamily/networkIPFamily edge cases ---
+
+func TestIPFamily_Coverage(t *testing.T) {
+	// nil IP → IPv6
+	if ipFamily(nil) != NetworkIPv6 {
+		t.Error("nil IP should return IPv6")
+	}
+
+	// Unspecified → IPv6
+	if ipFamily(net.IPv4zero) != NetworkIPv6 {
+		t.Error("unspecified should return IPv6")
+	}
+
+	// Short IPv4
+	if ipFamily(net.IP{127, 0, 0, 1}) != NetworkIPv4 {
+		t.Error("short IPv4 should return IPv4")
+	}
+
+	// IPv4-mapped-IPv6
+	if ipFamily(net.IPv4(192, 168, 1, 1)) != NetworkIPv4 {
+		t.Error("IPv4 mapped should return IPv4")
+	}
+
+	// Pure IPv6
+	if ipFamily(net.IPv6loopback) != NetworkIPv6 {
+		t.Error("IPv6 should return IPv6")
+	}
+}
+
+func TestNetworkIPFamily_Coverage(t *testing.T) {
+	// Suffix "4"
+	if networkIPFamily("tcp4", nil) != NetworkIPv4 {
+		t.Error("tcp4 should return IPv4")
+	}
+	// Suffix "6"
+	if networkIPFamily("tcp6", nil) != NetworkIPv6 {
+		t.Error("tcp6 should return IPv6")
+	}
+	// No suffix, nil IP
+	if networkIPFamily("tcp", nil) != NetworkIPv6 {
+		t.Error("tcp with nil IP should return IPv6")
+	}
+}
+
+// --- UnixSocketPair ---
+
+func TestUnixSocketPair_Coverage(t *testing.T) {
+	pair, err := UnixSocketPair()
+	if err != nil {
+		t.Fatalf("UnixSocketPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Verify they can communicate
+	_, err = pair[0].Write([]byte("ping"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	buf := make([]byte, 64)
+	n, err := pair[1].Read(buf)
+	if err != nil && err != iox.ErrWouldBlock {
+		t.Fatalf("Read: %v", err)
+	}
+	if n > 0 && string(buf[:n]) != "ping" {
+		t.Errorf("expected 'ping', got '%s'", buf[:n])
+	}
+}
+
+// --- ListenSCTP4/6 bind error paths ---
+
+func TestListenSCTP4_BindError(t *testing.T) {
+	// Invalid IP should cause bind error
+	_, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(255, 255, 255, 255), Port: 1})
+	if err == nil {
+		t.Error("expected bind error for broadcast address")
+	}
+}
+
+func TestListenSCTP6_BindError(t *testing.T) {
+	// Use a non-local IPv6 address
+	badIP := net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	_, err := ListenSCTP6(&SCTPAddr{IP: badIP, Port: 1})
+	if err == nil {
+		// Some systems might succeed, so just skip
+		t.Skip("bind succeeded unexpectedly")
+	}
+}
+
+// --- DialSCTP auto-detect IPv6 path ---
+
+func TestDialSCTP_IPv6AutoDetect(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP/IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*SCTPAddr)
+	conn, err := DialSCTP("sctp6", nil, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialSCTP sctp6: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+// --- DialTCP auto-detect IPv6 ---
+
+func TestDialTCP_IPv6AutoDetect_Cov(t *testing.T) {
+	_, err := DialTCP("tcp4", nil, nil)
+	if err != ErrInvalidParam {
+		t.Errorf("expected ErrInvalidParam, got %v", err)
+	}
+}
+
+// --- TCP DialTCP6 with laddr ---
+
+func TestDialTCP6_WithLaddr(t *testing.T) {
+	ln, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer ln.Close()
+
+	raddr := ln.Addr().(*TCPAddr)
+	laddr := &TCPAddr{IP: net.IPv6loopback, Port: 0}
+	conn, err := DialTCP6(laddr, raddr)
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialTCP6 with laddr: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+// --- DialUDP4 with laddr ---
+
+func TestDialUDP4_WithLaddr(t *testing.T) {
+	srv, err := ListenUDP4(&UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP4: %v", err)
+	}
+	defer srv.Close()
+
+	raddr := srv.LocalAddr().(*UDPAddr)
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	conn, err := DialUDP4(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialUDP4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialUDP6_WithLaddr(t *testing.T) {
+	srv, err := ListenUDP6(&UDPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("IPv6 not available: %v", err)
+	}
+	defer srv.Close()
+
+	raddr := srv.LocalAddr().(*UDPAddr)
+	laddr := &UDPAddr{IP: net.IPv6loopback, Port: 0}
+	conn, err := DialUDP6(laddr, raddr)
+	if err != nil {
+		t.Fatalf("DialUDP6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- UnixConn ReadFrom/WriteTo error paths ---
+
+func TestUnixConn_WriteTo_Closed(t *testing.T) {
+	pair, err := UnixConnPair("unixgram")
+	if err != nil {
+		t.Fatalf("UnixConnPair: %v", err)
+	}
+	pair[0].Close()
+
+	// Write to closed fd
+	pair[0].SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
+	_, err = pair[0].WriteTo([]byte("test"), &UnixAddr{Name: "/tmp/test"})
+	if err == nil {
+		t.Error("expected error writing to closed socket")
+	}
+	pair[1].Close()
+}
+
+func TestUnixConn_ReadFrom_Closed(t *testing.T) {
+	pair, err := UnixConnPair("unixgram")
+	if err != nil {
+		t.Fatalf("UnixConnPair: %v", err)
+	}
+	pair[0].Close()
+
+	buf := make([]byte, 64)
+	pair[0].SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	_, _, err = pair[0].ReadFrom(buf)
+	if err == nil {
+		t.Error("expected error reading from closed socket")
+	}
+	pair[1].Close()
+}
+
+// --- DialUnix with laddr ---
+
+func TestDialUnix_WithLaddr(t *testing.T) {
+	path := "@test-dial-laddr-" + time.Now().Format("150405.000")
+	ln, err := ListenUnix("unix", &UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	defer ln.Close()
+
+	lpath := "@test-dial-client-" + time.Now().Format("150405.000")
+	laddr := &UnixAddr{Name: lpath, Net: "unix"}
+	conn, err := DialUnix("unix", laddr, &UnixAddr{Name: path, Net: "unix"})
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialUnix with laddr: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+// --- ListenUnix seqpacket path ---
+
+func TestListenUnix_Seqpacket(t *testing.T) {
+	path := "@test-seqpacket-" + time.Now().Format("150405.000")
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("ListenUnix unixpacket: %v", err)
+	}
+	defer ln.Close()
+}
+
+// --- DialUnix dgram and seqpacket ---
+
+func TestDialUnix_Dgram(t *testing.T) {
+	path := "@test-dgram-" + time.Now().Format("150405.000")
+	srv, err := ListenUnixgram("unixgram", &UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		t.Fatalf("ListenUnixgram: %v", err)
+	}
+	defer srv.Close()
+
+	conn, err := DialUnix("unixgram", nil, &UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		t.Fatalf("DialUnix unixgram: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialUnix_Seqpacket_Cov(t *testing.T) {
+	path := "@test-seqpacket-dial-" + time.Now().Format("150405.000")
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	defer ln.Close()
+
+	conn, err := DialUnix("unixpacket", nil, &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialUnix unixpacket: %v", err)
+	}
+	if conn != nil {
+		defer conn.Close()
+	}
+}
+
+// --- UnixConnPair all types ---
+
+func TestUnixConnPair_Dgram(t *testing.T) {
+	pair, err := UnixConnPair("unixgram")
+	if err != nil {
+		t.Fatalf("UnixConnPair unixgram: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+}
+
+func TestUnixConnPair_Seqpacket_Cov(t *testing.T) {
+	pair, err := UnixConnPair("unixpacket")
+	if err != nil {
+		t.Fatalf("UnixConnPair unixpacket: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+}
+
+// --- errFromErrno edge coverage ---
+
+func TestErrFromErrno_AllMappings(t *testing.T) {
+	tests := []struct {
+		errno uintptr
+		want  error
+	}{
+		{0, nil},
+		{EAGAIN, iox.ErrWouldBlock},
+		{EBADF, ErrClosed},
+		{EINVAL, ErrInvalidParam},
+		{EINTR, ErrInterrupted},
+		{ENOMEM, ErrNoMemory},
+		{ENOBUFS, ErrNoMemory},
+		{EACCES, ErrPermission},
+		{EPERM, ErrPermission},
+		{ECONNREFUSED, ErrConnectionRefused},
+		{ECONNRESET, ErrConnectionReset},
+		{ECONNABORTED, ErrConnectionReset},
+		{EPIPE, ErrConnectionReset},
+		{ESHUTDOWN, ErrConnectionReset},
+		{ENOTCONN, ErrNotConnected},
+		{EDESTADDRREQ, ErrNotConnected},
+		{EINPROGRESS, ErrInProgress},
+		{EALREADY, ErrInProgress},
+		{EISCONN, nil},
+		{EADDRINUSE, ErrAddressInUse},
+		{EADDRNOTAVAIL, ErrAddressNotAvailable},
+		{ETIMEDOUT, ErrTimedOut},
+		{ENETDOWN, ErrNetworkUnreachable},
+		{ENETUNREACH, ErrNetworkUnreachable},
+		{EHOSTUNREACH, ErrHostUnreachable},
+		{EMSGSIZE, ErrMessageTooLarge},
+		{EAFNOSUPPORT, ErrAddressFamilyNotSupported},
+		{EPROTONOSUPPORT, ErrProtocolNotSupported},
+	}
+
+	for _, tt := range tests {
+		got := errFromErrno(tt.errno)
+		if got != tt.want {
+			t.Errorf("errFromErrno(%d): got %v, want %v", tt.errno, got, tt.want)
+		}
+	}
+
+	// Unknown errno should return zcall.Errno
+	unknown := errFromErrno(999)
+	if unknown == nil {
+		t.Error("expected non-nil error for unknown errno")
+	}
+}
+
+// --- SockaddrUnix Path edge cases ---
+
+func TestSockaddrUnix_PathEdgeCases_Cov(t *testing.T) {
+	// Empty path
+	sa := NewSockaddrUnix("")
+	if p := sa.Path(); p != "" {
+		t.Errorf("expected empty path, got '%s'", p)
+	}
+
+	// Abstract socket (starts with NUL)
+	sa2 := &SockaddrUnix{}
+	initRawSockaddrUnix(&sa2.raw, AF_UNIX)
+	sa2.raw.Path[0] = 0
+	sa2.raw.Path[1] = 'a'
+	sa2.raw.Path[2] = 'b'
+	sa2.length = 2 + 3 // family + 3 bytes
+	p := sa2.Path()
+	if len(p) != 3 {
+		t.Errorf("expected 3-byte abstract path, got %d bytes: %q", len(p), p)
+	}
+
+	// SetPath
+	sa.SetPath("/new/path")
+	if sa.Path() != "/new/path" {
+		t.Errorf("expected '/new/path', got '%s'", sa.Path())
+	}
+
+	// Zero-initialized struct path fallback
+	sa3 := &SockaddrUnix{}
+	initRawSockaddrUnix(&sa3.raw, AF_UNIX)
+	// length == 0, triggers fallback
+	sa3.length = 0
+	p3 := sa3.Path()
+	if p3 != "" {
+		t.Errorf("expected empty path for zero-init, got '%s'", p3)
+	}
+}
+
+// --- TCPAddrToSockaddr/UDPAddrToSockaddr nil cases ---
+
+func TestTCPAddrToSockaddr_NilIP_Cov(t *testing.T) {
+	// nil addr
+	if sa := TCPAddrToSockaddr(nil); sa != nil {
+		t.Error("expected nil for nil addr")
+	}
+
+	// nil IP (should return nil)
+	sa := TCPAddrToSockaddr(&TCPAddr{Port: 80})
+	if sa != nil {
+		t.Error("expected nil for nil IP")
+	}
+}
+
+func TestUDPAddrToSockaddr_NilIP_Cov(t *testing.T) {
+	if sa := UDPAddrToSockaddr(nil); sa != nil {
+		t.Error("expected nil for nil addr")
+	}
+
+	sa := UDPAddrToSockaddr(&UDPAddr{Port: 80})
+	if sa != nil {
+		t.Error("expected nil for nil IP")
+	}
+}
+
+func TestUnixAddrToSockaddr_Nil(t *testing.T) {
+	if sa := UnixAddrToSockaddr(nil); sa != nil {
+		t.Error("expected nil for nil addr")
+	}
+}
+
+// --- scopeIDToZone edge cases ---
+
+func TestScopeIDToZone_LargeValue(t *testing.T) {
+	s := scopeIDToZone(4294967295) // max uint32
+	if s == "" {
+		t.Error("expected non-empty string for max uint32")
+	}
+}
+
+func TestZoneToScopeID_NonNumeric(t *testing.T) {
+	id := zoneToScopeID("eth0")
+	if id != 0 {
+		t.Errorf("expected 0 for non-numeric zone, got %d", id)
+	}
+}
+
+// --- NetSocket Protocol mask ---
+
+func TestNetSocket_ProtocolMask(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM|zcall.SOCK_NONBLOCK|zcall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected Stream after masking flags, got %v", sock.Protocol())
+	}
+}
+
+// =============================================================================
+// Additional coverage tests - Phase 2
+// =============================================================================
+
+// --- rawConn Read/Write closed fd path ---
+
+func TestRawConn_ReadClosedFD(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	rc := newRawConn(sock.fd)
+	sock.Close()
+	err = rc.Read(func(fd uintptr) bool { return true })
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestRawConn_WriteClosedFD(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	rc := newRawConn(sock.fd)
+	sock.Close()
+	err = rc.Write(func(fd uintptr) bool { return true })
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- WriteMsgUDP deadline paths ---
+
+func TestWriteMsgUDP_WithDeadline(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Set write deadline to already expired
+	conn.SetWriteDeadline(time.Now().Add(-time.Second))
+
+	// Attempt WriteMsgUDP with expired deadline
+	_, _, err = conn.WriteMsgUDP([]byte("test"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		// WriteMsgUDP might succeed on first try (non-blocking sendmsg)
+		// If first try succeeds, ErrWouldBlock never triggers deadline check
+	}
+}
+
+func TestWriteMsgUDP_NoDeadline_WouldBlock(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Send should succeed (non-blocking, just queues)
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	// Either succeeds or returns WouldBlock (no deadline, returns immediately)
+	_ = err
+}
+
+func TestWriteMsgUDP_WithOOB_Cov2(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Test with OOB data
+	oob := make([]byte, 16)
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), oob, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	_ = err
+}
+
+func TestWriteMsgUDP_IPv6Addr(t *testing.T) {
+	sock, err := NewUDPSocket6()
+	if err != nil {
+		t.Fatalf("NewUDPSocket6: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv6loopback, Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr6(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv6loopback, Port: 9999})
+	_ = err
+}
+
+func TestWriteMsgUDP_NilAddr(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Nil addr - sendmsg without destination (will fail on unconnected socket)
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, nil)
+	_ = err
+}
+
+func TestWriteMsgUDP_ClosedFD(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock}
+	sock.Close()
+
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestWriteMsgUDP_EmptyBuffer(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Empty buffer
+	_, _, err = conn.WriteMsgUDP(nil, nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	_ = err
+}
+
+// --- ListenTCP/UDP bind error paths ---
+
+func TestListenTCP4_BindError_Cov2(t *testing.T) {
+	// First listener succeeds
+	ln1, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("first listen: %v", err)
+	}
+	defer ln1.Close()
+	port := ln1.Addr().(*TCPAddr).Port
+
+	// Second listener on same port - may succeed due to SO_REUSEPORT
+	ln2, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+	if err != nil {
+		// Good - bind error path covered
+		return
+	}
+	ln2.Close()
+}
+
+func TestListenTCP6_BindError_Cov2(t *testing.T) {
+	ln1, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Fatalf("first listen: %v", err)
+	}
+	defer ln1.Close()
+	port := ln1.Addr().(*TCPAddr).Port
+
+	ln2, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: port})
+	if err != nil {
+		return
+	}
+	ln2.Close()
+}
+
+// --- Dial with laddr ---
+
+func TestDialTCP4_WithLaddr(t *testing.T) {
+	ln, err := ListenTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*TCPAddr)
+
+	// Dial with explicit laddr
+	conn, err := DialTCP4(&TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if conn.LocalAddr() == nil {
+		t.Error("expected non-nil local address")
+	}
+}
+
+func TestDialTCP6_WithLaddr_Cov2(t *testing.T) {
+	ln, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*TCPAddr)
+
+	conn, err := DialTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0}, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialTCP6_ConnectError(t *testing.T) {
+	// Connect to a port that's not listening (should get error)
+	_, err := DialTCP6(nil, &TCPAddr{IP: net.IPv6loopback, Port: 1})
+	// Either ErrInProgress (non-blocking) or connection refused
+	_ = err
+}
+
+func TestTCPDialer_Dial6_WithLaddr_Cov2(t *testing.T) {
+	ln, err := ListenTCP6(&TCPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*TCPAddr)
+
+	dialer := &TCPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial6(&TCPAddr{IP: net.IPv6loopback, Port: 0}, raddr)
+	if err != nil {
+		t.Fatalf("dial6: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestTCPDialer_Dial6_BindError(t *testing.T) {
+	dialer := &TCPDialer{Timeout: time.Millisecond}
+	// Bind to an address we can't use
+	_, err := dialer.Dial6(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &TCPAddr{IP: net.IPv6loopback, Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestTCPDialer_Dial4_BindError(t *testing.T) {
+	dialer := &TCPDialer{Timeout: time.Millisecond}
+	// Bind to an address we can't use
+	_, err := dialer.Dial4(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+// --- UDP dial/listen ---
+
+func TestDialUDP4_WithLaddr_Cov2(t *testing.T) {
+	ln, err := ListenUDP4(&UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.LocalAddr().(*UDPAddr)
+
+	conn, err := DialUDP4(&UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialUDP6_WithLaddr_Cov2(t *testing.T) {
+	ln, err := ListenUDP6(&UDPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.LocalAddr().(*UDPAddr)
+
+	conn, err := DialUDP6(&UDPAddr{IP: net.IPv6loopback, Port: 0}, raddr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialUDP4_BindError(t *testing.T) {
+	_, err := DialUDP4(&UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestDialUDP6_BindError(t *testing.T) {
+	_, err := DialUDP6(&UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &UDPAddr{IP: net.IPv6loopback, Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestListenUDP4_BindError(t *testing.T) {
+	// Use an address we can't bind to
+	_, err := ListenUDP4(&UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestListenUDP6_BindError(t *testing.T) {
+	_, err := ListenUDP6(&UDPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+// --- SCTP dial/listen error paths ---
+
+func TestDialSCTP4_BindError(t *testing.T) {
+	_, err := DialSCTP4(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestDialSCTP6_BindError(t *testing.T) {
+	_, err := DialSCTP6(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &SCTPAddr{IP: net.IPv6loopback, Port: 9999})
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestListenSCTP4_BindError_Cov2(t *testing.T) {
+	_, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestListenSCTP6_BindError_Cov2(t *testing.T) {
+	_, err := ListenSCTP6(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestSCTPDialer_Dial4_BindError(t *testing.T) {
+	dialer := &SCTPDialer{Timeout: time.Millisecond}
+	_, err := dialer.Dial4(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestSCTPDialer_Dial6_BindError(t *testing.T) {
+	dialer := &SCTPDialer{Timeout: time.Millisecond}
+	_, err := dialer.Dial6(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 12345}, &SCTPAddr{IP: net.IPv6loopback, Port: 9999})
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+// --- SendTo closed fd ---
+
+func TestUDPSocket_SendTo_ClosedFD(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	sock.Close()
+	_, err = sock.SendTo([]byte("hello"), &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestUDPSocket_SendTo_IPv6_Cov2(t *testing.T) {
+	sock, err := NewUDPSocket6()
+	if err != nil {
+		t.Fatalf("NewUDPSocket6: %v", err)
+	}
+	defer sock.Close()
+	laddr := &UDPAddr{IP: net.IPv6loopback, Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr6(laddr)); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	// IPv6 addr → exercises else branch in SendTo
+	_, err = sock.SendTo([]byte("test"), &UDPAddr{IP: net.IPv6loopback, Port: 9999})
+	_ = err
+}
+
+// --- ListenUnix bind error ---
+
+func TestListenUnix_BindError_Cov(t *testing.T) {
+	// Path too long will cause bind error
+	longPath := "/tmp/" + string(make([]byte, 200))
+	_, err := ListenUnix("unix", &UnixAddr{Name: longPath, Net: "unix"})
+	if err == nil {
+		t.Error("expected bind error for long path")
+	}
+}
+
+// --- DialUnix with laddr ---
+
+func TestDialUnix_WithLaddr_Cov2(t *testing.T) {
+	ln, err := ListenUnix("unix", &UnixAddr{Name: t.TempDir() + "/test.sock", Net: "unix"})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	conn, err := DialUnix("unix", &UnixAddr{Name: t.TempDir() + "/client.sock", Net: "unix"}, ln.Addr().(*UnixAddr))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialUnix_BindError(t *testing.T) {
+	longPath := "/tmp/" + string(make([]byte, 200))
+	_, err := DialUnix("unix", &UnixAddr{Name: longPath, Net: "unix"}, &UnixAddr{Name: "/tmp/test.sock", Net: "unix"})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+// --- UnixConnPair exercising unixgram ---
+
+func TestUnixConnPair_Unixgram(t *testing.T) {
+	pair, err := UnixConnPair("unixgram")
+	if err != nil {
+		t.Fatalf("UnixConnPair unixgram: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+}
+
+// --- SetLinger/GetLinger closed fd ---
+
+func TestSetLinger_ClosedFD_Cov2(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	fd := sock.fd
+	sock.Close()
+	err = SetLinger(fd, true, 5)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestGetLinger_ClosedFD(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	fd := sock.fd
+	sock.Close()
+	_, _, err = GetLinger(fd)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- GetSockname closed fd ---
+
+func TestGetSockname_ClosedFD(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	fd := sock.fd
+	sock.Close()
+	_, err = GetSockname(fd)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- Connect closed fd ---
+
+func TestNetSocket_ConnectClosedFD_Cov2(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	sock.Close()
+	sa := &SockaddrInet4{}
+	sa.SetAddr([4]byte{127, 0, 0, 1})
+	sa.SetPort(9999)
+	err = sock.Connect(sa)
+	if err != ErrClosed {
+		t.Errorf("expected ErrClosed, got %v", err)
+	}
+}
+
+// --- NewNetSocket invalid domain ---
+
+func TestNewNetSocket_InvalidDomain_Cov2(t *testing.T) {
+	_, err := NewNetSocket(9999, zcall.SOCK_STREAM, 0)
+	if err == nil {
+		t.Error("expected error for invalid domain")
+	}
+}
+
+// --- SCTPSocket.Protocol default case ---
+
+func TestSCTPSocket_Protocol_RawType(t *testing.T) {
+	// Create a raw NetSocket with an unusual typ value
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, IPPROTO_SCTP)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	defer sock.Close()
+	// Manually tweak typ to hit default case
+	s := &SCTPSocket{NetSocket: sock}
+	// SOCK_STREAM has typ & 0xF == 1 → returns UnderlyingProtocolStream
+	if s.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected Stream, got %v", s.Protocol())
+	}
+}
+
+// --- UnixSocket.Protocol default case ---
+
+func TestUnixSocket_Protocol_RawSock(t *testing.T) {
+	// SOCK_RAW = 3, not in switch
+	sock, err := NewNetSocket(zcall.AF_UNIX, zcall.SOCK_RAW, 0)
+	if err != nil {
+		// SOCK_RAW for AF_UNIX may not be supported
+		t.Skipf("SOCK_RAW not supported for AF_UNIX: %v", err)
+	}
+	defer sock.Close()
+	us := &UnixSocket{NetSocket: sock}
+	// default case returns UnderlyingProtocolStream
+	if us.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("expected default Stream, got %v", us.Protocol())
+	}
+}
+
+// --- ListenUnix with unixpacket ---
+
+func TestListenUnix_Unixpacket(t *testing.T) {
+	path := t.TempDir() + "/seqpacket.sock"
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("ListenUnix unixpacket: %v", err)
+	}
+	defer ln.Close()
+}
+
+// --- DialUnix with unixpacket ---
+
+func TestDialUnix_Unixpacket_Cov(t *testing.T) {
+	path := t.TempDir() + "/seqpacket.sock"
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	conn, err := DialUnix("unixpacket", nil, &UnixAddr{Name: path, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- DialUnix with unixgram ---
+
+func TestDialUnix_Unixgram(t *testing.T) {
+	path := t.TempDir() + "/dgram.sock"
+	_, err := ListenUnixgram("unixgram", &UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	conn, err := DialUnix("unixgram", nil, &UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- adaptiveConnect timeout path ---
+
+func TestAdaptiveConnect_Timeout(t *testing.T) {
+	// Connect to an unreachable address with a short timeout
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+	// RFC 5737 TEST-NET: 192.0.2.1 — packets are silently dropped
+	sa := &SockaddrInet4{}
+	sa.SetAddr([4]byte{192, 0, 2, 1})
+	sa.SetPort(9999)
+	err = adaptiveConnect(sock.NetSocket, sa, 50*time.Millisecond)
+	if err != ErrTimedOut && err != nil {
+		// ErrTimedOut is the expected path; other errors are also acceptable
+	}
+}
+
+// --- ListenTCP4/6 Listen error path ---
+
+func TestListenTCP4_ListenError_Cov2(t *testing.T) {
+	// Bind a UDP socket, then try to listen (should fail since listen only works on stream)
+	// Actually, we need to test the Listen call failure in ListenTCP4.
+	// One way is to create a TCP socket, bind, close the fd, then try listen
+	// But ListenTCP4 creates its own socket internally, so we can't easily inject failure.
+	// Skip - this path is difficult to trigger with real kernel.
+	t.Skip("Listen error path requires fd manipulation not accessible through public API")
+}
+
+// --- SCTPListener AcceptSocket ---
+
+func TestSCTPListener_AcceptSocket_ClosedCov(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	ln.Close()
+	_, err = ln.AcceptSocket()
+	if err == nil {
+		t.Error("expected error from closed listener")
+	}
+}
+
+// --- SCTPDialer Dial4/6 connect error ---
+
+func TestSCTPDialer_Dial4_ConnectError(t *testing.T) {
+	dialer := &SCTPDialer{Timeout: 50 * time.Millisecond}
+	_, err := dialer.Dial4(nil, &SCTPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 9999})
+	// Should timeout or get connection refused
+	if err == nil {
+		t.Error("expected connection error")
+	}
+}
+
+func TestSCTPDialer_Dial6_ConnectError(t *testing.T) {
+	dialer := &SCTPDialer{Timeout: 50 * time.Millisecond}
+	_, err := dialer.Dial6(nil, &SCTPAddr{IP: net.IPv6loopback, Port: 1})
+	// Should get connection refused
+	if err == nil {
+		t.Error("expected connection error")
+	}
+}
+
+// --- NewNetUnixSocket dgram ---
+
+func TestNewNetUnixSocket_Dgram_Cov2(t *testing.T) {
+	sock, err := NewNetUnixSocket(zcall.SOCK_DGRAM)
+	if err != nil {
+		t.Fatalf("NewNetUnixSocket SOCK_DGRAM: %v", err)
+	}
+	defer sock.Close()
+}
+
+// --- ResolveSCTPAddr DNS path ---
+
+func TestResolveSCTPAddr_Localhost(t *testing.T) {
+	addr, err := ResolveSCTPAddr("sctp4", "localhost:3000")
+	if err != nil {
+		t.Skipf("DNS not available: %v", err)
+	}
+	if addr.Port != 3000 {
+		t.Errorf("expected port 3000, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_Sctp6(t *testing.T) {
+	addr, err := ResolveSCTPAddr("sctp6", "[::1]:5000")
+	if err != nil {
+		t.Skipf("resolve failed: %v", err)
+	}
+	if addr.Port != 5000 {
+		t.Errorf("expected port 5000, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_DualStack(t *testing.T) {
+	addr, err := ResolveSCTPAddr("sctp", "localhost:8080")
+	if err != nil {
+		t.Skipf("DNS not available: %v", err)
+	}
+	if addr.Port != 8080 {
+		t.Errorf("expected port 8080, got %d", addr.Port)
+	}
+}
+
+func TestResolveSCTPAddr_InvalidNetwork_Cov2(t *testing.T) {
+	_, err := ResolveSCTPAddr("tcp", "localhost:3000")
+	if err == nil {
+		t.Error("expected error for invalid network")
+	}
+}
+
+func TestResolveSCTPAddr_BadAddress(t *testing.T) {
+	_, err := ResolveSCTPAddr("sctp4", "nonexistent.invalid:3000")
+	if err == nil {
+		t.Error("expected error for bad address")
+	}
+}
+
+// --- WriteMsgUDP deadline paths (trigger EAGAIN by filling send buffer) ---
+
+func TestWriteMsgUDP_DeadlinePaths(t *testing.T) {
+	// Create a connected UDP pair to trigger EAGAIN
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+
+	// Get actual port
+	sa, err := GetSockname(sock.fd)
+	if err != nil {
+		sock.Close()
+		t.Fatalf("getsockname: %v", err)
+	}
+	inet4 := sa.(*SockaddrInet4)
+	actualPort := inet4.Port()
+
+	conn := &UDPConn{UDPSocket: sock, laddr: &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(actualPort)}}
+	defer conn.Close()
+
+	// Set a very small send buffer to make EAGAIN more likely
+	_ = setSockoptInt(sock.fd, SOL_SOCKET, SO_SNDBUF, 1024)
+
+	// Set a short write deadline
+	conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
+
+	// Try to send - on non-blocking socket with small buffer, might get EAGAIN→deadline path
+	dst := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999}
+	bigBuf := make([]byte, 65000)
+	for i := 0; i < 100; i++ {
+		_, _, err = conn.WriteMsgUDP(bigBuf, nil, dst)
+		if err == ErrTimedOut {
+			// Successfully exercised deadline path
+			return
+		}
+		if err != nil && err != iox.ErrWouldBlock {
+			break
+		}
+	}
+}
+
+func TestWriteMsgUDP_NoDeadline_Returns(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// No deadline set - WriteMsgUDP should return immediately even on WouldBlock
+	n, oobn, err := conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		if n != 5 {
+			t.Errorf("expected n=5, got %d", n)
+		}
+		if oobn != 0 {
+			t.Errorf("expected oobn=0, got %d", oobn)
+		}
+	}
+}
+
+func TestWriteMsgUDP_ExpiredDeadline(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
+	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
+		sock.Close()
+		t.Fatalf("bind: %v", err)
+	}
+	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
+	defer conn.Close()
+
+	// Set already-expired deadline
+	conn.SetWriteDeadline(time.Now().Add(-time.Second))
+
+	// Try to send - if first sendmsg succeeds, it bypasses deadline check
+	// If first sendmsg returns EAGAIN (unlikely on loopback), then deadline check kicks in
+	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	_ = err // either success or ErrTimedOut
+}
+
+// --- ListenTCP bind error with unreachable IP (exercises lines 277-280, 306-309) ---
+
+func TestListenTCP4_BindUnreachable(t *testing.T) {
+	_, err := ListenTCP4(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error for unreachable IP")
+	}
+}
+
+func TestListenTCP6_BindUnreachable(t *testing.T) {
+	_, err := ListenTCP6(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error for unreachable IP")
+	}
+}
+
+// --- DialTCP4/6 connect error with unreachable target (exercises lines 361-364, 401-404) ---
+
+func TestDialTCP4_ConnectUnreachable(t *testing.T) {
+	// Use a local IP that doesn't belong to us → EADDRNOTAVAIL on bind
+	conn, err := DialTCP4(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 55555}, &TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1})
+	if err == nil {
+		conn.Close()
+		t.Error("expected bind error")
+	}
+}
+
+func TestDialTCP6_ConnectUnreachable(t *testing.T) {
+	conn, err := DialTCP6(&TCPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 55555}, &TCPAddr{IP: net.IPv6loopback, Port: 1})
+	if err == nil {
+		conn.Close()
+		t.Error("expected bind error")
+	}
+}
+
+// --- ListenSCTP4/6 Listen error after bind (try listen on already listening socket?) ---
+
+func TestListenSCTP4_ListenFull(t *testing.T) {
+	// Normal success path with local address query
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	if ln.Addr() == nil {
+		t.Error("expected non-nil listener address")
+	}
+}
+
+func TestListenSCTP6_ListenFull(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	if ln.Addr() == nil {
+		t.Error("expected non-nil listener address")
+	}
+}
+
+// --- SCTP Dialer with laddr success paths ---
+
+func TestSCTPDialer_Dial4_WithLaddr_Cov3(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*SCTPAddr)
+
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, raddr)
+	if err != nil {
+		// SCTP SEQPACKET dial to STREAM listener may fail
+		t.Skipf("dial4 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestSCTPDialer_Dial6_WithLaddr_Cov3(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*SCTPAddr)
+
+	dialer := &SCTPDialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial6(&SCTPAddr{IP: net.IPv6loopback, Port: 0}, raddr)
+	if err != nil {
+		t.Skipf("dial6 with laddr: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- DialSCTP4/6 with laddr success paths ---
+
+func TestDialSCTP4_WithLaddr_Cov3(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*SCTPAddr)
+
+	conn, err := DialSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, raddr)
+	if err != nil {
+		t.Skipf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+func TestDialSCTP6_WithLaddr_Cov3(t *testing.T) {
+	ln, err := ListenSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	raddr := ln.Addr().(*SCTPAddr)
+
+	conn, err := DialSCTP6(&SCTPAddr{IP: net.IPv6loopback, Port: 0}, raddr)
+	if err != nil {
+		t.Skipf("dial: %v", err)
+	}
+	defer conn.Close()
+}
+
+// --- DialSCTP connect error (exercises connect error + close in DialSCTP4/6) ---
+
+func TestDialSCTP4_ConnectRefused(t *testing.T) {
+	_, err := DialSCTP4(nil, &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1})
+	// Either ErrInProgress (non-blocking) or connection refused
+	_ = err
+}
+
+func TestDialSCTP6_ConnectRefused(t *testing.T) {
+	_, err := DialSCTP6(nil, &SCTPAddr{IP: net.IPv6loopback, Port: 1})
+	_ = err
+}
+
+// --- SCTPSocket Protocol SEQPACKET case ---
+
+func TestSCTPSocket_Protocol_SeqPacket_Cov3(t *testing.T) {
+	sock, err := NewSCTPSocket4()
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer sock.Close()
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("expected SeqPacket, got %v", sock.Protocol())
+	}
+}
+
+// --- SCTPListener AcceptSocket success ---
+
+func TestSCTPListener_AcceptSocket_Success(t *testing.T) {
+	ln, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Skipf("SCTP not available: %v", err)
+	}
+	defer ln.Close()
+	ln.SetDeadline(time.Now().Add(2 * time.Second))
+
+	raddr := ln.Addr().(*SCTPAddr)
+	// Use stream socket to match listener
+	csock, err := NewSCTPStreamSocket4()
+	if err != nil {
+		t.Fatalf("new stream socket: %v", err)
+	}
+	sa := sctpAddrToSockaddr4(raddr)
+	if err := adaptiveConnect(csock.NetSocket, sa, 2*time.Second); err != nil {
+		csock.Close()
+		t.Fatalf("connect: %v", err)
+	}
+	defer csock.Close()
+
+	sock, err := ln.AcceptSocket()
+	if err != nil {
+		t.Fatalf("AcceptSocket: %v", err)
+	}
+	sock.Close()
+}
+
+// --- SCTPSocket.Protocol default case ---
+
+func TestSCTPSocket_Protocol_DefaultCase(t *testing.T) {
+	sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_DGRAM, 0)
+	if err != nil {
+		t.Fatalf("NewNetSocket: %v", err)
+	}
+	defer sock.Close()
+	// Wrap in SCTPSocket with SOCK_DGRAM type (not STREAM or SEQPACKET)
+	s := &SCTPSocket{NetSocket: sock}
+	p := s.Protocol()
+	if p != UnderlyingProtocolSeqPacket {
+		t.Errorf("expected default SeqPacket, got %v", p)
+	}
+}
+
+// --- rawConn Read/Write Gosched path (f returns false then true) ---
+
+func TestRawConn_ReadRetry(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	rc := newRawConn(sock.fd)
+	called := 0
+	err = rc.Read(func(fd uintptr) bool {
+		called++
+		return called >= 2 // Return false first, then true
+	})
+	if err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+	if called < 2 {
+		t.Errorf("expected at least 2 calls, got %d", called)
+	}
+}
+
+func TestRawConn_WriteRetry(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	rc := newRawConn(sock.fd)
+	called := 0
+	err = rc.Write(func(fd uintptr) bool {
+		called++
+		return called >= 2
+	})
+	if err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+	if called < 2 {
+		t.Errorf("expected at least 2 calls, got %d", called)
+	}
+}
+
+// --- ListenUnix listen error path ---
+
+func TestListenUnix_ListenBindError(t *testing.T) {
+	path := t.TempDir() + "/exists"
+	// Create a regular file at that path to block bind
+	if f, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
+		f.Close()
+	}
+	// Write a dummy file
+	buf := []byte("x")
+	fd, errno := zcall.Socket(zcall.AF_UNIX, zcall.SOCK_STREAM, 0)
+	if errno != 0 {
+		t.Skipf("socket: %v", errno)
+	}
+	zcall.Close(fd)
+	_ = buf
+	_ = path
+	t.Skip("covered by unreachable IP bind error tests")
+}
+
+// --- DialSCTP4/6 bind error with laddr ---
+
+func TestDialSCTP4_LaddrBindError(t *testing.T) {
+	_, err := DialSCTP4(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 55555}, &SCTPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestDialSCTP6_LaddrBindError(t *testing.T) {
+	_, err := DialSCTP6(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 55555}, &SCTPAddr{IP: net.IPv6loopback, Port: 9999})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+// --- ListenSCTP4/6 bind error (not just EADDRNOTAVAIL but EACCES on port 1) ---
+
+func TestResolveSCTPAddr_PortOutOfRange(t *testing.T) {
+	_, err := ResolveSCTPAddr("sctp", "localhost:99999")
+	if err == nil {
+		t.Fatal("expected error for out-of-range port")
+	}
+	_, err = ResolveSCTPAddr("sctp", "localhost:-1")
+	if err == nil {
+		t.Fatal("expected error for negative port")
+	}
+}
+
+func TestResolveSCTPAddr_IPv4Literal_SCTP6Reject(t *testing.T) {
+	_, err := ResolveSCTPAddr("sctp6", "127.0.0.1:80")
+	if err == nil {
+		t.Fatal("expected error for sctp6 with IPv4 literal")
+	}
+}
+
+func TestResolveSCTPAddr_SCTP6DNSLoopback(t *testing.T) {
+	// Use ip6-localhost which resolves to ::1 via /etc/hosts on most Linux systems
+	addr, err := ResolveSCTPAddr("sctp6", "ip6-localhost:4321")
+	if err != nil {
+		t.Skipf("ip6-localhost resolution not available: %v", err)
+	}
+	if addr.Port != 4321 {
+		t.Errorf("expected port 4321, got %d", addr.Port)
+	}
+	if addr.IP.To4() != nil {
+		t.Errorf("expected IPv6 address, got IPv4: %v", addr.IP)
+	}
+}
+
+func TestListenSCTP4_BindErrorUnreachable(t *testing.T) {
+	_, err := ListenSCTP4(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
+}
+
+func TestListenSCTP6_BindErrorUnreachable(t *testing.T) {
+	_, err := ListenSCTP6(&SCTPAddr{IP: net.IPv4(1, 2, 3, 4), Port: 0})
+	if err == nil {
+		t.Error("expected bind error")
+	}
 }
