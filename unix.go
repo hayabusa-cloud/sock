@@ -154,7 +154,7 @@ func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
 		if errno != 0 {
 			return int(rn), errFromErrno(errno)
 		}
-		addr = decodeUnixAddr(&rsa)
+		addr = decodeUnixAddr(&rsa, rsaLen)
 		return int(rn), nil
 	}, &c.deadline)
 
@@ -218,11 +218,11 @@ func (l *UnixListener) SetDeadline(t time.Time) error {
 // If a deadline is set, retries with backoff until success or deadline exceeded.
 func (l *UnixListener) Accept() (*UnixConn, error) {
 	return adaptiveAccept(func() (*UnixConn, error) {
-		sock, rawAddr, err := l.NetSocket.Accept()
+		sock, rawAddr, addrlen, err := l.NetSocket.Accept()
 		if err != nil {
 			return nil, err
 		}
-		raddr := decodeUnixAddr(rawAddr)
+		raddr := decodeUnixAddr(rawAddr, addrlen)
 		conn := &UnixConn{
 			UnixSocket: &UnixSocket{NetSocket: sock},
 			laddr:      l.laddr,
@@ -372,23 +372,38 @@ func unixAddrToSockaddr(addr *UnixAddr) *SockaddrUnix {
 	return NewSockaddrUnix(addr.Name)
 }
 
-func decodeUnixAddr(raw *RawSockaddrAny) *UnixAddr {
+func decodeUnixAddr(raw *RawSockaddrAny, addrlen uint32) *UnixAddr {
 	if raw == nil || raw.Addr.Family != AF_UNIX {
 		return nil
 	}
 	su := (*RawSockaddrUnix)(unsafe.Pointer(raw))
-	// Find NUL terminator
-	var path string
-	for i, b := range su.Path {
-		if b == 0 {
-			path = string(su.Path[:i])
-			break
+
+	// Calculate path length from kernel-provided addrlen
+	// addrlen = sizeof(sa_family_t) + path_bytes
+	// sa_family_t is 2 bytes on Linux
+	if addrlen < 2 {
+		return &UnixAddr{Name: "", Net: "unix"}
+	}
+	pathLen := int(addrlen) - 2
+	if pathLen <= 0 {
+		return &UnixAddr{Name: "", Net: "unix"}
+	}
+	if pathLen > len(su.Path) {
+		pathLen = len(su.Path)
+	}
+
+	// Abstract socket: starts with NUL byte, use full length from kernel
+	if su.Path[0] == 0 && pathLen > 1 {
+		return &UnixAddr{Name: string(su.Path[:pathLen]), Net: "unix"}
+	}
+
+	// Pathname socket: stop at NUL terminator
+	for i := range pathLen {
+		if su.Path[i] == 0 {
+			return &UnixAddr{Name: string(su.Path[:i]), Net: "unix"}
 		}
 	}
-	if path == "" && su.Path[0] != 0 {
-		path = string(su.Path[:])
-	}
-	return &UnixAddr{Name: path, Net: "unix"}
+	return &UnixAddr{Name: string(su.Path[:pathLen]), Net: "unix"}
 }
 
 // Compile-time interface assertions

@@ -145,7 +145,7 @@ func (l *TCPListener) SetDeadline(t time.Time) error {
 
 func (l *TCPListener) Accept() (*TCPConn, error) {
 	return adaptiveAccept(func() (*TCPConn, error) {
-		sock, rawAddr, err := l.NetSocket.Accept()
+		sock, rawAddr, _, err := l.NetSocket.Accept()
 		if err != nil {
 			return nil, err
 		}

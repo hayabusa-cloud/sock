@@ -219,7 +219,7 @@ func (l *SCTPListener) SetDeadline(t time.Time) error {
 // If a deadline is set, retries with backoff until success or deadline exceeded.
 func (l *SCTPListener) Accept() (*SCTPConn, error) {
 	return adaptiveAccept(func() (*SCTPConn, error) {
-		sock, rawAddr, err := l.NetSocket.Accept()
+		sock, rawAddr, _, err := l.NetSocket.Accept()
 		if err != nil {
 			return nil, err
 		}
