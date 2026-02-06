@@ -316,7 +316,7 @@ func TestDecodeSockaddr(t *testing.T) {
 		rawInet4.Addr = [4]byte{192, 168, 1, 1}
 		rawInet4.Port = htons(8080)
 
-		sa := DecodeSockaddr(raw)
+		sa := DecodeSockaddr(raw, SizeofSockaddrInet4)
 		if sa == nil {
 			t.Fatal("Expected non-nil sockaddr")
 		}
@@ -339,7 +339,7 @@ func TestDecodeSockaddr(t *testing.T) {
 		rawInet6.Addr = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 		rawInet6.Port = htons(8080)
 
-		sa := DecodeSockaddr(raw)
+		sa := DecodeSockaddr(raw, SizeofSockaddrInet6)
 		if sa == nil {
 			t.Fatal("Expected non-nil sockaddr")
 		}
@@ -350,9 +350,33 @@ func TestDecodeSockaddr(t *testing.T) {
 	})
 
 	t.Run("Nil", func(t *testing.T) {
-		sa := DecodeSockaddr(nil)
+		sa := DecodeSockaddr(nil, 0)
 		if sa != nil {
 			t.Error("Expected nil for nil raw")
+		}
+	})
+
+	t.Run("UnixAbstract", func(t *testing.T) {
+		raw := &RawSockaddrAny{}
+		raw.Addr.Family = AF_UNIX
+		rawUnix := (*RawSockaddrUnix)(unsafe.Pointer(raw))
+		// Abstract socket: starts with NUL, then name
+		rawUnix.Path[0] = 0
+		copy(rawUnix.Path[1:], "abstract-test")
+		// addrlen = 2 (family) + 1 (NUL) + len("abstract-test")
+		addrlen := uint32(2 + 1 + len("abstract-test"))
+
+		sa := DecodeSockaddr(raw, addrlen)
+		if sa == nil {
+			t.Fatal("Expected non-nil sockaddr")
+		}
+		unixSa, ok := sa.(*SockaddrUnix)
+		if !ok {
+			t.Fatalf("Expected *SockaddrUnix, got %T", sa)
+		}
+		expected := "\x00abstract-test"
+		if unixSa.Path() != expected {
+			t.Errorf("Expected %q, got %q", expected, unixSa.Path())
 		}
 	})
 }
@@ -1155,7 +1179,7 @@ func TestDecodeUDPAddr(t *testing.T) {
 
 func TestDecodeUnixAddr(t *testing.T) {
 	t.Run("Nil", func(t *testing.T) {
-		addr := decodeUnixAddr(nil)
+		addr := decodeUnixAddr(nil, 0)
 		if addr != nil {
 			t.Error("Expected nil for nil input")
 		}
@@ -1165,7 +1189,7 @@ func TestDecodeUnixAddr(t *testing.T) {
 		raw := &RawSockaddrAny{}
 		raw.Addr.Family = AF_INET
 
-		addr := decodeUnixAddr(raw)
+		addr := decodeUnixAddr(raw, SizeofSockaddrAny)
 		if addr != nil {
 			t.Error("Expected nil for wrong family")
 		}
@@ -1175,9 +1199,12 @@ func TestDecodeUnixAddr(t *testing.T) {
 		raw := &RawSockaddrAny{}
 		raw.Addr.Family = AF_UNIX
 		rawUnix := (*RawSockaddrUnix)(unsafe.Pointer(raw))
-		copy(rawUnix.Path[:], "/tmp/test.sock")
+		path := "/tmp/test.sock"
+		copy(rawUnix.Path[:], path)
+		// addrlen = 2 (family) + len(path) + 1 (NUL)
+		addrlen := uint32(2 + len(path) + 1)
 
-		addr := decodeUnixAddr(raw)
+		addr := decodeUnixAddr(raw, addrlen)
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
@@ -1194,10 +1221,61 @@ func TestDecodeUnixAddr(t *testing.T) {
 		for i := range rawUnix.Path {
 			rawUnix.Path[i] = 'x'
 		}
+		// addrlen = 2 (family) + len(path)
+		addrlen := uint32(2 + len(rawUnix.Path))
 
-		addr := decodeUnixAddr(raw)
+		addr := decodeUnixAddr(raw, addrlen)
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
+		}
+	})
+
+	t.Run("AbstractSocket", func(t *testing.T) {
+		raw := &RawSockaddrAny{}
+		raw.Addr.Family = AF_UNIX
+		rawUnix := (*RawSockaddrUnix)(unsafe.Pointer(raw))
+		// Abstract socket: starts with NUL, then name
+		rawUnix.Path[0] = 0
+		copy(rawUnix.Path[1:], "abstract-name")
+		// addrlen = 2 (family) + 1 (NUL) + len("abstract-name")
+		addrlen := uint32(2 + 1 + len("abstract-name"))
+
+		addr := decodeUnixAddr(raw, addrlen)
+		if addr == nil {
+			t.Fatal("Expected non-nil addr")
+		}
+		// Abstract socket name includes leading NUL
+		expected := "\x00abstract-name"
+		if addr.Name != expected {
+			t.Errorf("Expected %q, got %q", expected, addr.Name)
+		}
+	})
+
+	t.Run("EmptyPath", func(t *testing.T) {
+		raw := &RawSockaddrAny{}
+		raw.Addr.Family = AF_UNIX
+		// addrlen = 2 (family only, no path)
+		addrlen := uint32(2)
+
+		addr := decodeUnixAddr(raw, addrlen)
+		if addr == nil {
+			t.Fatal("Expected non-nil addr")
+		}
+		if addr.Name != "" {
+			t.Errorf("Expected empty name, got %q", addr.Name)
+		}
+	})
+
+	t.Run("ZeroAddrlen", func(t *testing.T) {
+		raw := &RawSockaddrAny{}
+		raw.Addr.Family = AF_UNIX
+
+		addr := decodeUnixAddr(raw, 0)
+		if addr == nil {
+			t.Fatal("Expected non-nil addr")
+		}
+		if addr.Name != "" {
+			t.Errorf("Expected empty name, got %q", addr.Name)
 		}
 	})
 }
@@ -2316,9 +2394,12 @@ func TestDecodeSockaddr_Unix(t *testing.T) {
 	raw := &RawSockaddrAny{}
 	raw.Addr.Family = AF_UNIX
 	rawUnix := (*RawSockaddrUnix)(unsafe.Pointer(raw))
-	copy(rawUnix.Path[:], "/tmp/decode-test.sock")
+	path := "/tmp/decode-test.sock"
+	copy(rawUnix.Path[:], path)
+	// addrlen = 2 (family) + len(path) + 1 (NUL)
+	addrlen := uint32(2 + len(path) + 1)
 
-	sa := DecodeSockaddr(raw)
+	sa := DecodeSockaddr(raw, addrlen)
 	if sa == nil {
 		t.Fatal("Expected non-nil sockaddr")
 	}
@@ -3518,7 +3599,7 @@ func TestNetSocket_ClosedOperations(t *testing.T) {
 		t.Error("Expected error for listen on closed socket")
 	}
 
-	_, _, err = sock.Accept()
+	_, _, _, err = sock.Accept()
 	if err == nil {
 		t.Error("Expected error for accept on closed socket")
 	}

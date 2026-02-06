@@ -96,3 +96,77 @@ func GetIPv6Only(fd *iofd.FD) (bool, error) {
 	v, err := getSockoptInt(fd, SOL_IPV6, IPV6_V6ONLY)
 	return v != 0, err
 }
+
+// SetTCPUserTimeout sets the TCP_USER_TIMEOUT socket option.
+// This sets the maximum time (in milliseconds) that transmitted data may
+// remain unacknowledged before the connection is forcefully closed.
+func SetTCPUserTimeout(fd *iofd.FD, ms int) error {
+	return setSockoptInt(fd, SOL_TCP, TCP_USER_TIMEOUT, ms)
+}
+
+// GetTCPUserTimeout returns the current TCP_USER_TIMEOUT setting.
+func GetTCPUserTimeout(fd *iofd.FD) (int, error) {
+	return getSockoptInt(fd, SOL_TCP, TCP_USER_TIMEOUT)
+}
+
+// SetTCPNotsentLowat sets the TCP_NOTSENT_LOWAT socket option.
+// This sets the threshold in bytes for the amount of unsent data
+// in the socket write buffer before the socket becomes writable.
+func SetTCPNotsentLowat(fd *iofd.FD, bytes int) error {
+	return setSockoptInt(fd, SOL_TCP, TCP_NOTSENT_LOWAT, bytes)
+}
+
+// GetTCPNotsentLowat returns the current TCP_NOTSENT_LOWAT setting.
+func GetTCPNotsentLowat(fd *iofd.FD) (int, error) {
+	return getSockoptInt(fd, SOL_TCP, TCP_NOTSENT_LOWAT)
+}
+
+// SetUDPSegment sets the UDP_SEGMENT socket option for UDP GSO.
+// This sets the segment size in bytes for UDP Generic Segmentation Offload.
+// The kernel will split large datagrams into segments of this size.
+func SetUDPSegment(fd *iofd.FD, segmentSize int) error {
+	return setSockoptInt(fd, SOL_UDP, UDP_SEGMENT, segmentSize)
+}
+
+// GetUDPSegment returns the current UDP_SEGMENT setting.
+func GetUDPSegment(fd *iofd.FD) (int, error) {
+	return getSockoptInt(fd, SOL_UDP, UDP_SEGMENT)
+}
+
+// SetUDPGRO enables or disables the UDP_GRO socket option.
+// When enabled, the kernel coalesces incoming UDP packets
+// before delivering them to the application.
+func SetUDPGRO(fd *iofd.FD, enable bool) error {
+	return setSockoptInt(fd, SOL_UDP, UDP_GRO, boolToInt(enable))
+}
+
+// GetUDPGRO returns the current UDP_GRO setting.
+func GetUDPGRO(fd *iofd.FD) (bool, error) {
+	v, err := getSockoptInt(fd, SOL_UDP, UDP_GRO)
+	return v != 0, err
+}
+
+// SetIPTransparent enables or disables the IP_TRANSPARENT socket option.
+// When enabled, allows binding to non-local addresses and enables
+// transparent proxying. Requires CAP_NET_ADMIN capability.
+func SetIPTransparent(fd *iofd.FD, enable bool) error {
+	return setSockoptInt(fd, SOL_IP, IP_TRANSPARENT, boolToInt(enable))
+}
+
+// GetIPTransparent returns the current IP_TRANSPARENT setting.
+func GetIPTransparent(fd *iofd.FD) (bool, error) {
+	v, err := getSockoptInt(fd, SOL_IP, IP_TRANSPARENT)
+	return v != 0, err
+}
+
+// SetBusyPoll sets the SO_BUSY_POLL socket option.
+// This sets the approximate time in microseconds to busy poll
+// waiting for packets when the socket is idle.
+func SetBusyPoll(fd *iofd.FD, usecs int) error {
+	return setSockoptInt(fd, SOL_SOCKET, SO_BUSY_POLL, usecs)
+}
+
+// GetBusyPoll returns the current SO_BUSY_POLL setting.
+func GetBusyPoll(fd *iofd.FD) (int, error) {
+	return getSockoptInt(fd, SOL_SOCKET, SO_BUSY_POLL)
+}

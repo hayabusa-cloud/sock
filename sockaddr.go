@@ -273,7 +273,9 @@ func SockaddrToUnixAddr(sa Sockaddr, network string) *net.UnixAddr {
 }
 
 // DecodeSockaddr decodes a raw sockaddr into a Sockaddr.
-func DecodeSockaddr(raw *RawSockaddrAny) Sockaddr {
+// For Unix sockets, addrlen from the kernel is required to correctly handle
+// abstract sockets (which start with NUL byte). For IPv4/IPv6, addrlen is ignored.
+func DecodeSockaddr(raw *RawSockaddrAny, addrlen uint32) Sockaddr {
 	if raw == nil {
 		return nil
 	}
@@ -290,15 +292,8 @@ func DecodeSockaddr(raw *RawSockaddrAny) Sockaddr {
 	case AF_UNIX:
 		sa := &SockaddrUnix{}
 		sa.raw = *(*RawSockaddrUnix)(unsafe.Pointer(raw))
-		for i, b := range sa.raw.Path {
-			if b == 0 {
-				sa.length = uint32(2 + i + 1)
-				break
-			}
-		}
-		if sa.length == 0 {
-			sa.length = SizeofSockaddrUnix
-		}
+		// Use kernel-provided addrlen for correct abstract socket handling
+		sa.length = addrlen
 		return sa
 	}
 	return nil
@@ -378,7 +373,7 @@ func GetSockname(fd *iofd.FD) (Sockaddr, error) {
 	if errno != 0 {
 		return nil, errFromErrno(errno)
 	}
-	return DecodeSockaddr(&rsa), nil
+	return DecodeSockaddr(&rsa, addrlen), nil
 }
 
 // GetPeername retrieves the remote address of a connected socket.
@@ -393,5 +388,5 @@ func GetPeername(fd *iofd.FD) (Sockaddr, error) {
 	if errno != 0 {
 		return nil, errFromErrno(errno)
 	}
-	return DecodeSockaddr(&rsa), nil
+	return DecodeSockaddr(&rsa, addrlen), nil
 }

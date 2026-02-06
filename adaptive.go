@@ -209,8 +209,15 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, error) {
 	var zero T
 
-	// First attempt (Strike)
-	result, err := acceptFn()
+	// First attempt (Strike) with EINTR retry
+	var result T
+	var err error
+	for {
+		result, err = acceptFn()
+		if err != ErrInterrupted {
+			break
+		}
+	}
 	if err != iox.ErrWouldBlock {
 		return result, err
 	}
@@ -230,7 +237,12 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 	for {
 		backoff.wait()
 
-		result, err = acceptFn()
+		for {
+			result, err = acceptFn()
+			if err != ErrInterrupted {
+				break
+			}
+		}
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return result, err

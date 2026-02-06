@@ -110,16 +110,16 @@ func (s *NetSocket) Listen(backlog int) error {
 	return nil
 }
 
-func (s *NetSocket) Accept() (*NetSocket, *RawSockaddrAny, error) {
+func (s *NetSocket) Accept() (*NetSocket, *RawSockaddrAny, uint32, error) {
 	raw := s.fd.Raw()
 	if raw < 0 {
-		return nil, nil, ErrClosed
+		return nil, nil, 0, ErrClosed
 	}
 	var addr RawSockaddrAny
 	addrlen := uint32(SizeofSockaddrAny)
 	nfd, err := accept4(int(raw), unsafe.Pointer(&addr), unsafe.Pointer(&addrlen))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	newSock := &NetSocket{
 		fd:      newFDPtr(nfd),
@@ -128,7 +128,7 @@ func (s *NetSocket) Accept() (*NetSocket, *RawSockaddrAny, error) {
 		proto:   s.proto,
 		network: s.network,
 	}
-	return newSock, &addr, nil
+	return newSock, &addr, addrlen, nil
 }
 
 func (s *NetSocket) Connect(addr Sockaddr) error {

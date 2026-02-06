@@ -4,9 +4,9 @@
 
 // Package sock provides zero-allocation socket types and address machinery for Unix systems in Go.
 //
-// This package is designed for ultra-low latency systems where every nanosecond
-// matters. Unlike the standard net package, sock uses direct syscalls via the
-// zcall assembly package, bypassing Go's runtime hooks entirely.
+// The package uses direct syscalls via the zcall assembly package, bypassing
+// Go's runtime hooks. All sockets are created with SOCK_NONBLOCK and
+// SOCK_CLOEXEC flags.
 //
 // # When to Use This Package
 //

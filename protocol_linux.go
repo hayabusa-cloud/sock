@@ -25,6 +25,7 @@ const (
 	SO_OOBINLINE    = zcall.SO_OOBINLINE
 	SO_INCOMING_CPU = zcall.SO_INCOMING_CPU
 	SO_ZEROCOPY     = zcall.SO_ZEROCOPY
+	SO_BUSY_POLL    = zcall.SO_BUSY_POLL
 )
 
 // Linux-specific TCP options (TCP_*).
@@ -39,8 +40,20 @@ const (
 	TCP_INFO          = zcall.TCP_INFO
 	TCP_QUICKACK      = zcall.TCP_QUICKACK
 	TCP_CONGESTION    = zcall.TCP_CONGESTION
+	TCP_USER_TIMEOUT  = zcall.TCP_USER_TIMEOUT
 	TCP_FASTOPEN      = zcall.TCP_FASTOPEN
 	TCP_NOTSENT_LOWAT = zcall.TCP_NOTSENT_LOWAT
+)
+
+// Linux-specific UDP options (UDP_*).
+const (
+	UDP_SEGMENT = zcall.UDP_SEGMENT
+	UDP_GRO     = zcall.UDP_GRO
+)
+
+// Linux-specific IP options (IP_*).
+const (
+	IP_TRANSPARENT = zcall.IP_TRANSPARENT
 )
 
 // Linux-specific IPv6 options (IPV6_*).
