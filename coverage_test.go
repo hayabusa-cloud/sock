@@ -2290,7 +2290,7 @@ func TestDecodeSockaddr_AllTypes(t *testing.T) {
 	// IPv4
 	raw4 := &RawSockaddrAny{}
 	raw4.Addr.Family = AF_INET
-	sa := DecodeSockaddr(raw4)
+	sa := DecodeSockaddr(raw4, SizeofSockaddrInet4)
 	if sa == nil {
 		t.Error("DecodeSockaddr returned nil for AF_INET")
 	}
@@ -2298,7 +2298,7 @@ func TestDecodeSockaddr_AllTypes(t *testing.T) {
 	// IPv6
 	raw6 := &RawSockaddrAny{}
 	raw6.Addr.Family = AF_INET6
-	sa = DecodeSockaddr(raw6)
+	sa = DecodeSockaddr(raw6, SizeofSockaddrInet6)
 	if sa == nil {
 		t.Error("DecodeSockaddr returned nil for AF_INET6")
 	}
@@ -2306,7 +2306,7 @@ func TestDecodeSockaddr_AllTypes(t *testing.T) {
 	// Unix
 	rawUnix := &RawSockaddrAny{}
 	rawUnix.Addr.Family = AF_UNIX
-	sa = DecodeSockaddr(rawUnix)
+	sa = DecodeSockaddr(rawUnix, SizeofSockaddrUnix)
 	if sa == nil {
 		t.Error("DecodeSockaddr returned nil for AF_UNIX")
 	}
@@ -2314,7 +2314,7 @@ func TestDecodeSockaddr_AllTypes(t *testing.T) {
 	// Unknown family
 	rawUnk := &RawSockaddrAny{}
 	rawUnk.Addr.Family = 255
-	sa = DecodeSockaddr(rawUnk)
+	sa = DecodeSockaddr(rawUnk, SizeofSockaddrAny)
 	if sa != nil {
 		t.Error("DecodeSockaddr should return nil for unknown family")
 	}
@@ -3890,7 +3890,7 @@ func TestSockaddrToTCPAddr_NilCases(t *testing.T) {
 
 func TestDecodeSockaddr_AllFamilies(t *testing.T) {
 	// Test nil
-	sa := DecodeSockaddr(nil)
+	sa := DecodeSockaddr(nil, 0)
 	if sa != nil {
 		t.Error("expected nil for nil raw")
 	}
@@ -3901,7 +3901,7 @@ func TestDecodeSockaddr_AllFamilies(t *testing.T) {
 	inet4.Family = AF_INET
 	inet4.Port = htons(8080)
 	inet4.Addr = [4]byte{127, 0, 0, 1}
-	sa = DecodeSockaddr(&raw4)
+	sa = DecodeSockaddr(&raw4, SizeofSockaddrInet4)
 	if sa == nil {
 		t.Error("expected non-nil for IPv4")
 	}
@@ -3914,7 +3914,7 @@ func TestDecodeSockaddr_AllFamilies(t *testing.T) {
 	inet6 := (*RawSockaddrInet6)(unsafe.Pointer(&raw6))
 	inet6.Family = AF_INET6
 	inet6.Port = htons(8080)
-	sa = DecodeSockaddr(&raw6)
+	sa = DecodeSockaddr(&raw6, SizeofSockaddrInet6)
 	if sa == nil {
 		t.Error("expected non-nil for IPv6")
 	}
@@ -3923,8 +3923,10 @@ func TestDecodeSockaddr_AllFamilies(t *testing.T) {
 	var rawUnix RawSockaddrAny
 	sunix := (*RawSockaddrUnix)(unsafe.Pointer(&rawUnix))
 	sunix.Family = AF_UNIX
-	copy(sunix.Path[:], "/tmp/test.sock")
-	sa = DecodeSockaddr(&rawUnix)
+	path := "/tmp/test.sock"
+	copy(sunix.Path[:], path)
+	addrlen := uint32(2 + len(path) + 1)
+	sa = DecodeSockaddr(&rawUnix, addrlen)
 	if sa == nil {
 		t.Error("expected non-nil for Unix")
 	}
@@ -4542,10 +4544,10 @@ func TestLinger_EnabledWithTimeoutCoverage(t *testing.T) {
 func TestDecodeSockaddr_UnixCoverage(t *testing.T) {
 	path := "/tmp/test.sock"
 	sa := NewSockaddrUnix(path)
-	ptr, _ := sa.Raw()
+	ptr, length := sa.Raw()
 	raw := (*RawSockaddrAny)(ptr)
 
-	decoded := DecodeSockaddr(raw)
+	decoded := DecodeSockaddr(raw, length)
 	if decoded == nil {
 		t.Error("expected non-nil for Unix sockaddr")
 	}
@@ -4987,7 +4989,7 @@ func TestDecodeSockaddr_UnixNoNul(t *testing.T) {
 	for i := range sunix.Path {
 		sunix.Path[i] = 'x'
 	}
-	sa := DecodeSockaddr(&rawUnix)
+	sa := DecodeSockaddr(&rawUnix, SizeofSockaddrUnix)
 	if sa == nil {
 		t.Fatal("expected non-nil sockaddr for AF_UNIX")
 	}
@@ -5130,7 +5132,7 @@ func TestDecodeSockaddr_InvalidFamily(t *testing.T) {
 	var raw RawSockaddrAny
 	raw.Addr.Family = 255 // Invalid family
 
-	decoded := DecodeSockaddr(&raw)
+	decoded := DecodeSockaddr(&raw, SizeofSockaddrAny)
 	if decoded != nil {
 		t.Errorf("expected nil for invalid family, got %v", decoded)
 	}
@@ -8273,7 +8275,7 @@ func TestNetSocket_AcceptClosedFD(t *testing.T) {
 	}
 	sock.Close()
 
-	_, _, err = sock.Accept()
+	_, _, _, err = sock.Accept()
 	if err != ErrClosed {
 		t.Errorf("expected ErrClosed, got %v", err)
 	}
@@ -8655,7 +8657,7 @@ func TestDecodeSockaddr_UnknownFamily(t *testing.T) {
 	var raw RawSockaddrAny
 	// Set an unknown family
 	*(*uint16)(unsafe.Pointer(&raw)) = 99
-	result := DecodeSockaddr(&raw)
+	result := DecodeSockaddr(&raw, SizeofSockaddrAny)
 	if result != nil {
 		t.Errorf("expected nil for unknown family, got %v", result)
 	}
@@ -10377,3 +10379,312 @@ func TestListenSCTP6_BindErrorUnreachable(t *testing.T) {
 		t.Error("expected bind error")
 	}
 }
+
+// --- NetSocketPair coverage ---
+
+func TestNetSocketPair_Basic(t *testing.T) {
+	pair, err := NetSocketPair(AF_UNIX, SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("NetSocketPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	// Test write/read
+	data := []byte("hello")
+	n, err := pair[0].Write(data)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if n != len(data) {
+		t.Errorf("Write: n=%d, want %d", n, len(data))
+	}
+
+	buf := make([]byte, 64)
+	n, err = pair[1].Read(buf)
+	if err != nil && err != iox.ErrWouldBlock {
+		t.Fatalf("Read: %v", err)
+	}
+}
+
+func TestUnixSocketPair_Basic(t *testing.T) {
+	pair, err := UnixSocketPair()
+	if err != nil {
+		t.Fatalf("UnixSocketPair: %v", err)
+	}
+	defer pair[0].Close()
+	defer pair[1].Close()
+
+	if pair[0].FD() == nil || pair[1].FD() == nil {
+		t.Error("FD() should not be nil")
+	}
+}
+
+// --- Socket creation coverage ---
+
+func TestNewTCPSocket4_ProtocolCheck(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolStream)
+	}
+}
+
+func TestNewTCPSocket6_ProtocolCheck(t *testing.T) {
+	sock, err := NewTCPSocket6()
+	if err != nil {
+		t.Fatalf("NewTCPSocket6: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolStream)
+	}
+}
+
+func TestNewUDPSocket4_ProtocolCheck(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolDgram {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolDgram)
+	}
+}
+
+func TestNewUDPSocket6_ProtocolCheck(t *testing.T) {
+	sock, err := NewUDPSocket6()
+	if err != nil {
+		t.Fatalf("NewUDPSocket6: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolDgram {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolDgram)
+	}
+}
+
+// --- Linger coverage ---
+
+func TestSetLinger_EnabledWithTimeout(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	// Enable linger with 5 second timeout
+	if err := SetLinger(sock.fd, true, 5); err != nil {
+		t.Fatalf("SetLinger: %v", err)
+	}
+
+	enabled, secs, err := GetLinger(sock.fd)
+	if err != nil {
+		t.Fatalf("GetLinger: %v", err)
+	}
+	if !enabled {
+		t.Error("expected linger enabled")
+	}
+	if secs != 5 {
+		t.Errorf("linger seconds: got %d, want 5", secs)
+	}
+}
+
+func TestSetLinger_ZeroTimeoutRST(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	// Enable linger with 0 timeout (RST on close)
+	if err := SetLinger(sock.fd, true, 0); err != nil {
+		t.Fatalf("SetLinger: %v", err)
+	}
+
+	enabled, secs, err := GetLinger(sock.fd)
+	if err != nil {
+		t.Fatalf("GetLinger: %v", err)
+	}
+	if !enabled {
+		t.Error("expected linger enabled")
+	}
+	if secs != 0 {
+		t.Errorf("linger seconds: got %d, want 0", secs)
+	}
+}
+
+func TestSetLinger_OnClosedSocket(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	sock.Close()
+
+	err = SetLinger(sock.fd, true, 5)
+	if err != ErrClosed {
+		t.Errorf("SetLinger on closed: got %v, want ErrClosed", err)
+	}
+}
+
+func TestGetLinger_OnClosedSocket(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	sock.Close()
+
+	_, _, err = GetLinger(sock.fd)
+	if err != ErrClosed {
+		t.Errorf("GetLinger on closed: got %v, want ErrClosed", err)
+	}
+}
+
+// --- GetSockname coverage ---
+
+func TestGetSockname_OnClosedSocket(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	sock.Close()
+
+	_, err = GetSockname(sock.fd)
+	if err != ErrClosed {
+		t.Errorf("GetSockname on closed: got %v, want ErrClosed", err)
+	}
+}
+
+// --- SCTP Socket creation coverage ---
+
+func TestNewSCTPSocket4_ProtocolCheck(t *testing.T) {
+	sock, err := NewSCTPSocket4()
+	if err != nil {
+		// SCTP may not be available
+		t.Skipf("NewSCTPSocket4: %v (SCTP may not be available)", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolSeqPacket)
+	}
+}
+
+func TestNewSCTPSocket6_ProtocolCheck(t *testing.T) {
+	sock, err := NewSCTPSocket6()
+	if err != nil {
+		t.Skipf("NewSCTPSocket6: %v (SCTP may not be available)", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolSeqPacket {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolSeqPacket)
+	}
+}
+
+func TestNewSCTPStreamSocket4_ProtocolCheck(t *testing.T) {
+	sock, err := NewSCTPStreamSocket4()
+	if err != nil {
+		t.Skipf("NewSCTPStreamSocket4: %v (SCTP may not be available)", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolStream)
+	}
+}
+
+func TestNewSCTPStreamSocket6_ProtocolCheck(t *testing.T) {
+	sock, err := NewSCTPStreamSocket6()
+	if err != nil {
+		t.Skipf("NewSCTPStreamSocket6: %v (SCTP may not be available)", err)
+	}
+	defer sock.Close()
+
+	if sock.Protocol() != UnderlyingProtocolStream {
+		t.Errorf("Protocol: got %d, want %d", sock.Protocol(), UnderlyingProtocolStream)
+	}
+}
+
+// NewNetSocket functions are already tested in coverage_test.go
+
+// --- TCP Defaults coverage ---
+
+func TestTCPSocket_DefaultsAppliedCheck(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	// Check SO_REUSEADDR is enabled by default
+	reuse, err := GetReuseAddr(sock.fd)
+	if err != nil {
+		t.Fatalf("GetReuseAddr: %v", err)
+	}
+	if !reuse {
+		t.Error("expected SO_REUSEADDR enabled by default")
+	}
+}
+
+// --- UDP Defaults coverage ---
+
+func TestUDPSocket_ZeroCopyDefaultCheck(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	// ZeroCopy is set on best-effort basis, may or may not be enabled
+	_, err = GetZeroCopy(sock.fd)
+	if err != nil && err != ErrClosed {
+		t.Logf("GetZeroCopy: %v (may not be supported)", err)
+	}
+}
+
+// --- NetSocket methods coverage ---
+
+func TestNetSocket_NetworkType(t *testing.T) {
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.NetworkType() != NetworkIPv4 {
+		t.Errorf("NetworkType: got %d, want %d", sock.NetworkType(), NetworkIPv4)
+	}
+}
+
+func TestNetSocket_NetworkTypeIPv6(t *testing.T) {
+	sock, err := NewTCPSocket6()
+	if err != nil {
+		t.Fatalf("NewTCPSocket6: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.NetworkType() != NetworkIPv6 {
+		t.Errorf("NetworkType: got %d, want %d", sock.NetworkType(), NetworkIPv6)
+	}
+}
+
+func TestNetSocket_NetworkTypeUnix(t *testing.T) {
+	sock, err := NewNetUnixSocket(SOCK_STREAM)
+	if err != nil {
+		t.Fatalf("NewNetUnixSocket: %v", err)
+	}
+	defer sock.Close()
+
+	if sock.NetworkType() != NetworkUnix {
+		t.Errorf("NetworkType: got %d, want %d", sock.NetworkType(), NetworkUnix)
+	}
+}
+
+// NetSocketPair tests are already in coverage_test.go

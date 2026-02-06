@@ -90,7 +90,7 @@ func BenchmarkDecodeSockaddr_IPv4(b *testing.B) {
 	raw.Addr.Family = AF_INET
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = DecodeSockaddr(raw)
+		_ = DecodeSockaddr(raw, SizeofSockaddrInet4)
 	}
 }
 
@@ -99,7 +99,7 @@ func BenchmarkDecodeSockaddr_IPv6(b *testing.B) {
 	raw.Addr.Family = AF_INET6
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = DecodeSockaddr(raw)
+		_ = DecodeSockaddr(raw, SizeofSockaddrInet6)
 	}
 }
 

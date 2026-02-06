@@ -427,7 +427,7 @@ func TestUnixListenerSetDeadline(t *testing.T) {
 }
 
 func TestDecodeUnixAddrNil(t *testing.T) {
-	addr := decodeUnixAddr(nil)
+	addr := decodeUnixAddr(nil, 0)
 	if addr != nil {
 		t.Error("decodeUnixAddr(nil) should return nil")
 	}
