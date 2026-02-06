@@ -184,6 +184,39 @@ sock.SetRecvBuffer(conn.FD(), 256*1024)
 
 // クローズ時に即座にRSTを送信するSO_LINGER
 sock.SetLinger(conn.FD(), true, 0)
+
+// TCP_USER_TIMEOUT 死んだ接続を検出（Linux）
+sock.SetTCPUserTimeout(conn.FD(), 30000)  // 30秒（ミリ秒）
+
+// TCP_NOTSENT_LOWAT メモリとレイテンシを削減（Linux）
+sock.SetTCPNotsentLowat(conn.FD(), 16384)
+
+// SO_BUSY_POLL 低レイテンシポーリング（Linux）
+sock.SetBusyPoll(conn.FD(), 50)  // 50マイクロ秒
+```
+
+### UDPバッチ操作（Linux）
+
+```go
+// 単一のシステムコールで複数メッセージを送信
+msgs := []sock.UDPMessage{
+    {Addr: addr1, Buffers: [][]byte{data1}},
+    {Addr: addr2, Buffers: [][]byte{data2}},
+}
+n, _ := conn.SendMessages(msgs)
+
+// 複数メッセージを受信
+recvMsgs := []sock.UDPMessage{
+    {Buffers: [][]byte{make([]byte, 1500)}},
+    {Buffers: [][]byte{make([]byte, 1500)}},
+}
+n, _ = conn.RecvMessages(recvMsgs)
+
+// UDP GSO（汎用セグメンテーションオフロード）
+sock.SetUDPSegment(conn.FD(), 1400)  // セグメントサイズ
+
+// UDP GRO（汎用受信オフロード）
+sock.SetUDPGRO(conn.FD(), true)
 ```
 
 ### エラー処理

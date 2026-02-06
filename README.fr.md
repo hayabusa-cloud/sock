@@ -184,6 +184,39 @@ sock.SetRecvBuffer(conn.FD(), 256*1024)
 
 // SO_LINGER pour RST immédiat à la fermeture
 sock.SetLinger(conn.FD(), true, 0)
+
+// TCP_USER_TIMEOUT pour détection de connexions mortes (Linux)
+sock.SetTCPUserTimeout(conn.FD(), 30000)  // 30 secondes en millisecondes
+
+// TCP_NOTSENT_LOWAT pour réduire la mémoire et la latence (Linux)
+sock.SetTCPNotsentLowat(conn.FD(), 16384)
+
+// SO_BUSY_POLL pour polling basse latence (Linux)
+sock.SetBusyPoll(conn.FD(), 50)  // 50 microsecondes
+```
+
+### Opérations UDP par Lots (Linux)
+
+```go
+// Envoyer plusieurs messages en un seul appel système
+msgs := []sock.UDPMessage{
+    {Addr: addr1, Buffers: [][]byte{data1}},
+    {Addr: addr2, Buffers: [][]byte{data2}},
+}
+n, _ := conn.SendMessages(msgs)
+
+// Recevoir plusieurs messages
+recvMsgs := []sock.UDPMessage{
+    {Buffers: [][]byte{make([]byte, 1500)}},
+    {Buffers: [][]byte{make([]byte, 1500)}},
+}
+n, _ = conn.RecvMessages(recvMsgs)
+
+// UDP GSO (Generic Segmentation Offload)
+sock.SetUDPSegment(conn.FD(), 1400)  // Taille de segment
+
+// UDP GRO (Generic Receive Offload)
+sock.SetUDPGRO(conn.FD(), true)
 ```
 
 ### Gestion des Erreurs
