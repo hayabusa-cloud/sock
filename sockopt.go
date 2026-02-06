@@ -232,9 +232,7 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// fcntl constants and SYS_FCNTL are defined in platform-specific files:
-// - fcntl_linux.go
-// - fcntl_bsd.go (FreeBSD/Darwin)
+// fcntl constants are imported from iofd package.
 
 // SetNonBlock sets the O_NONBLOCK flag on the file descriptor.
 func SetNonBlock(fd *iofd.FD, nonblock bool) error {
@@ -254,9 +252,9 @@ func SetNonBlock(fd *iofd.FD, nonblock bool) error {
 func SetCloseOnExec(fd *iofd.FD, cloexec bool) error {
 	var flags uintptr
 	if cloexec {
-		flags = FD_CLOEXEC
+		flags = iofd.FD_CLOEXEC
 	}
-	_, errno := zcall.Syscall4(SYS_FCNTL, uintptr(fd.Raw()), F_SETFD, flags, 0)
+	_, errno := zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd.Raw()), iofd.F_SETFD, flags, 0)
 	if errno != 0 {
 		return errFromErrno(errno)
 	}
@@ -264,7 +262,7 @@ func SetCloseOnExec(fd *iofd.FD, cloexec bool) error {
 }
 
 func getFdFlags(fd *iofd.FD) (int, error) {
-	flags, errno := zcall.Syscall4(SYS_FCNTL, uintptr(fd.Raw()), F_GETFL, 0, 0)
+	flags, errno := zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd.Raw()), iofd.F_GETFL, 0, 0)
 	if errno != 0 {
 		return 0, errFromErrno(errno)
 	}
@@ -272,7 +270,7 @@ func getFdFlags(fd *iofd.FD) (int, error) {
 }
 
 func setFdFlags(fd *iofd.FD, flags int) error {
-	_, errno := zcall.Syscall4(SYS_FCNTL, uintptr(fd.Raw()), F_SETFL, uintptr(flags), 0)
+	_, errno := zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd.Raw()), iofd.F_SETFL, uintptr(flags), 0)
 	if errno != 0 {
 		return errFromErrno(errno)
 	}

@@ -23,17 +23,17 @@ func socketFlags() int {
 // Darwin's socket() syscall does not support SOCK_NONBLOCK|SOCK_CLOEXEC flags.
 func socketPostCreate(fd int) error {
 	// Set O_NONBLOCK
-	flags, errno := zcall.Syscall4(SYS_FCNTL, uintptr(fd), F_GETFL, 0, 0)
+	flags, errno := zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd), iofd.F_GETFL, 0, 0)
 	if errno != 0 {
 		return errFromErrno(errno)
 	}
-	_, errno = zcall.Syscall4(SYS_FCNTL, uintptr(fd), F_SETFL, flags|zcall.O_NONBLOCK, 0)
+	_, errno = zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd), iofd.F_SETFL, flags|zcall.O_NONBLOCK, 0)
 	if errno != 0 {
 		return errFromErrno(errno)
 	}
 
 	// Set FD_CLOEXEC
-	_, errno = zcall.Syscall4(SYS_FCNTL, uintptr(fd), F_SETFD, FD_CLOEXEC, 0)
+	_, errno = zcall.Syscall4(iofd.SYS_FCNTL, uintptr(fd), iofd.F_SETFD, iofd.FD_CLOEXEC, 0)
 	if errno != 0 {
 		return errFromErrno(errno)
 	}
