@@ -14,8 +14,7 @@ import (
 )
 
 func newFDPtr(fd int) *iofd.FD {
-	f := iofd.NewFD(fd)
-	return &f
+	return new(iofd.NewFD(fd))
 }
 
 // NetSocket represents a network socket with NONBLOCK and CLOEXEC flags.

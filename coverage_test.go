@@ -5015,7 +5015,7 @@ func TestAdaptiveWrite_DeadlineExpired(t *testing.T) {
 
 	// Fill the write buffer to make it block
 	buf := make([]byte, 1024*1024) // 1MB
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		_, err := pair[0].Write(buf)
 		if err == iox.ErrWouldBlock {
 			break
@@ -5071,7 +5071,7 @@ func TestTCPConn_Read_EOF(t *testing.T) {
 	}
 
 	// Keep reading until EOF
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		time.Sleep(50 * time.Millisecond)
 		n, err = conn.Read(buf)
 		if err == io.EOF {
@@ -7070,7 +7070,7 @@ func TestWriteMsgUDP_DeadlineExpired(t *testing.T) {
 	data := make([]byte, 512)
 
 	// First, fill the send buffer without deadline to trigger would-block
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
 		if err == iox.ErrWouldBlock {
 			// Now we have a blocked socket - set expired deadline and try again
@@ -7107,7 +7107,7 @@ func TestWriteMsgUDP_DeadlineTimeoutInLoop(t *testing.T) {
 	data := make([]byte, 512)
 
 	// Fill the send buffer first
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
 		if err == iox.ErrWouldBlock {
 			// Now set a short deadline and try to write - should timeout in retry loop
@@ -7148,7 +7148,7 @@ func TestWriteMsgUDP_AggressiveStress(t *testing.T) {
 	data := make([]byte, 65507) // Max UDP payload
 
 	// Flood with maximum speed
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		_, _, err = conn.WriteMsgUDP(data, nil, destAddr)
 		if err == iox.ErrWouldBlock {
 			// Got EAGAIN - now test the deadline paths
@@ -7422,7 +7422,7 @@ func TestWriteMsgUDP_DeadlineExpiredPath(t *testing.T) {
 
 	// Try to fill buffer - may trigger ErrWouldBlock then ErrTimedOut
 	buf := make([]byte, 8192)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, _, err = client.WriteMsgUDP(buf, nil, nil)
 		if err == ErrTimedOut {
 			return // Success - hit the deadline path
@@ -7453,7 +7453,7 @@ func TestWriteMsgUDP_DeadlineRetryPath(t *testing.T) {
 
 	// Fill the send buffer
 	smallBuf := make([]byte, 512)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, errno := zcall.Write(uintptr(pair[0].fd.Raw()), smallBuf)
 		if errno == EAGAIN || errno == EWOULDBLOCK {
 			break
@@ -7532,7 +7532,7 @@ func TestSocketCreation_FDExhaustion(t *testing.T) {
 	var lastErr error
 	maxAttempts := 100000 // Safety limit
 
-	for i := 0; i < maxAttempts; i++ {
+	for range maxAttempts {
 		sock, err := NewNetSocket(zcall.AF_INET, zcall.SOCK_STREAM, zcall.IPPROTO_TCP)
 		if err != nil {
 			lastErr = err
@@ -9994,7 +9994,7 @@ func TestWriteMsgUDP_DeadlinePaths(t *testing.T) {
 	// Try to send - on non-blocking socket with small buffer, might get EAGAIN→deadline path
 	dst := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999}
 	bigBuf := make([]byte, 65000)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, _, err = conn.WriteMsgUDP(bigBuf, nil, dst)
 		if err == ErrTimedOut {
 			// Successfully exercised deadline path

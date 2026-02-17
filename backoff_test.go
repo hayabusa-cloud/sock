@@ -119,7 +119,7 @@ func TestNetBackoffJitterBounds(t *testing.T) {
 	minExpected := base - base/8 // -12.5%
 	maxExpected := base + base/8 // +12.5%
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		jittered := b.applyJitter(base)
 		if jittered < minExpected || jittered > maxExpected {
 			t.Errorf("jitter out of bounds: got %v, expected [%v, %v]", jittered, minExpected, maxExpected)
