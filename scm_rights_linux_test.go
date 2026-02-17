@@ -166,7 +166,7 @@ func TestSendRecvMultipleFDs(t *testing.T) {
 	// Create 3 temporary files
 	tmpfiles := make([]*os.File, 3)
 	sendFds := make([]int, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		tmpfile, err := os.CreateTemp("", "scm_rights_multi_test")
 		if err != nil {
 			t.Fatalf("CreateTemp failed: %v", err)

@@ -7,7 +7,7 @@ This is `sock`, a zero-allocation socket library for Go built on:
 - `iofd`: File descriptor abstractions
 - `iox`: Non-blocking I/O semantics (ErrWouldBlock, ErrMore)
 
-Target: Linux kernel 6.12+, Go 1.25+
+Target: Linux kernel 6.18+, Go 1.26+
 
 ## Review Focus
 
