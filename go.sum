@@ -1,6 +1,6 @@
-code.hybscloud.com/iofd v0.3.3 h1:USlDZH/LxxKrtRioHhmdzbJ1LZdYZ23TQzca/o5GDtk=
-code.hybscloud.com/iofd v0.3.3/go.mod h1:vcfWeRsEqI9Bqu8ZQOzGEfNK095wXt9qsLe4b9cOONQ=
-code.hybscloud.com/iox v0.3.3 h1:NTKW7ZM+e2x3Bd3O14nRKuFoVma0/Nix7LerofNUZ1k=
-code.hybscloud.com/iox v0.3.3/go.mod h1:LNxkaP3I0NWbnV2ia5zye8VMrk9kRCGbeIRZR2eGePA=
-code.hybscloud.com/zcall v0.3.0 h1:kprsuwxShst+VkLMxb7oI8Z2PjQ6O9HM68lPPFMfIBg=
-code.hybscloud.com/zcall v0.3.0/go.mod h1:KvMSYCr1JbOj6y/WNeGKGY+a8+Q0hN1egbhSgAp+NqQ=
+code.hybscloud.com/iofd v0.3.4 h1:RewH8MKtz0GUPaJZiEpssxJBzgS4V8J8iYowP8TVIts=
+code.hybscloud.com/iofd v0.3.4/go.mod h1:BCt1A8Y9KzYuVesBVHVWYHfTxGdR8XFbTm6eq/nWu50=
+code.hybscloud.com/iox v0.3.4 h1:2FMPyFH/AAkRAru/zKeo2oaIrmZgLdc4QDfVjKhGXCs=
+code.hybscloud.com/iox v0.3.4/go.mod h1:LNxkaP3I0NWbnV2ia5zye8VMrk9kRCGbeIRZR2eGePA=
+code.hybscloud.com/zcall v0.3.1 h1:c4jaTy2aWsW8v2cyGw5FA/rbPBjPXwRuxVgsmnLGvak=
+code.hybscloud.com/zcall v0.3.1/go.mod h1:KvMSYCr1JbOj6y/WNeGKGY+a8+Q0hN1egbhSgAp+NqQ=
