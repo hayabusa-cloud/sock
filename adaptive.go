@@ -13,15 +13,18 @@ import (
 	"code.hybscloud.com/iox"
 )
 
-// Adaptive I/O implements the Strike-Spin-Adapt model:
-//  1. Strike: Direct syscall (non-blocking) → returns iox.ErrWouldBlock if not ready.
-//  2. Spin: (handled by caller if needed via sox.SpinWait)
-//  3. Adapt: Software backoff (netBackoff) → used when deadline is set.
+// Adaptive I/O implements Strike and Adapt from the Three-Tier Progress Model.
 //
-// Contract:
-//   - By default, operations are non-blocking and return iox.ErrWouldBlock immediately.
-//   - Only when a deadline is explicitly set does the operation enter a retry loop.
-//   - The retry loop uses netBackoff for network-tuned progressive sleeping with jitter.
+// sock does not use the Spin tier. Spin (hardware yield via spin.Pause) is for
+// local atomic synchronization where the producer is on another CPU core. In
+// sock, the producer is the kernel or a network peer, so the Adapt tier applies.
+//
+//   - Strike: non-blocking syscall via zcall. Returns iox.ErrWouldBlock if not ready.
+//   - Adapt:  network-tuned backoff (netBackoff) when a deadline is set.
+//
+// By default, operations return iox.ErrWouldBlock immediately (pure non-blocking).
+// Setting a deadline activates the Adapt loop: retry with progressive sleep and
+// jitter until success or timeout.
 
 // deadlineState holds read and write deadlines for adaptive I/O.
 // Zero time means no deadline (non-blocking mode).
@@ -258,13 +261,17 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 // If timeout is zero, returns immediately after first connect attempt (non-blocking).
 // If timeout is set, probes connection status with backoff until connected or timeout.
 //
-// The connect operation for non-blocking sockets returns ErrInProgress on first call.
-// Connection completion is detected via second connect() call:
-//   - Returns nil (EISCONN mapped to nil) when connected
-//   - Returns ErrInProgress (EALREADY) while handshake is in progress
-//   - Returns other errors if connection failed
+// The connect operation for non-blocking sockets returns ErrInProgress on the
+// first call.
 //
-// This approach works for both TCP (SOCK_STREAM) and SCTP (SOCK_SEQPACKET).
+// For TCP sockets on Linux, subsequent connect() probes are used as follows:
+//   - nil (EISCONN mapped to nil) when connected
+//   - ErrInProgress (EALREADY) while the handshake is in progress
+//   - other errors if the connection failed
+//
+// SCTP completion and failure are observed through readiness and socket error
+// state rather than relying on repeated connect() probes to return the final
+// status directly.
 //
 // Parameters:
 //   - sock: the socket to connect

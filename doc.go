@@ -4,28 +4,25 @@
 
 // Package sock provides zero-allocation socket types and address machinery for Unix systems in Go.
 //
-// The package uses direct syscalls via the zcall assembly package, bypassing
-// Go's runtime hooks. All sockets are created with SOCK_NONBLOCK and
-// SOCK_CLOEXEC flags.
+// The package uses direct syscalls via the zcall assembly package. All sockets
+// are created with SOCK_NONBLOCK and SOCK_CLOEXEC flags.
 //
-// # When to Use This Package
+// # Overview
 //
-// Use sock instead of net when you need:
-//   - Zero-allocation hot paths for address handling
-//   - Non-blocking I/O without goroutine-per-connection overhead
-//   - Direct control over socket options and kernel interaction
-//   - Integration with io_uring for async I/O (via [iofd.FD])
-//
-// For typical applications where latency is not critical, the standard net
-// package provides a simpler and more portable API.
+// sock provides zero-allocation sockaddr encoding, non-blocking socket
+// operations, socket option control, and [iofd.FD] access for integration with
+// async I/O runtimes.
 //
 // # Adaptive I/O Model
 //
-// All I/O operations follow the Strike-Spin-Adapt model:
+// All I/O operations follow the Three-Tier Progress Model (Strike-Spin-Adapt):
 //
-//  1. Strike: Direct syscall execution (non-blocking)
-//  2. Spin: Hardware-level synchronization (handled by caller if needed)
-//  3. Adapt: Network-tuned software backoff when deadlines are set
+//  1. Strike: System call — direct kernel hit via zcall.
+//  2. Spin:   Hardware yield — local atomic synchronization (spin.Pause).
+//  3. Adapt:  Software backoff — external I/O readiness (progressive sleep).
+//
+// sock implements Strike and Adapt. Spin is not used here because sock
+// operations wait on the kernel or a network peer, not on local atomics.
 //
 // By default, operations are non-blocking:
 //
@@ -73,9 +70,10 @@
 //   - [SCTPSocket], [SCTPConn], [SCTPListener] for SCTP (Linux only)
 //   - [UnixSocket], [UnixConn], [UnixListener] for Unix domain sockets
 //   - [RawSocket], [RawConn] for raw IP (requires CAP_NET_RAW)
+//   - [Link], [Links], [LinkByName], [LinkByIndex] for Linux network link queries
 //
-// All sockets expose [iofd.FD] via the FD() method for io_uring integration
-// and other async I/O mechanisms.
+// All sockets expose [iofd.FD] via the FD method for io_uring integration and
+// other async I/O mechanisms.
 //
 // # Compatibility
 //
@@ -85,12 +83,12 @@
 //   - [UDPAddrToSockaddr], [SockaddrToUDPAddr]
 //   - [UnixAddrToSockaddr], [SockaddrToUnixAddr]
 //
-// Type aliases ([Conn], [Addr], [Listener]) provide net.Conn, net.Addr,
+// Type aliases ([Conn], [Addr], [Listener]) provide net.Conn, net.Addr, and
 // net.Listener interface compatibility.
 //
 // # Platforms
 //
 //   - linux/amd64, linux/arm64, linux/riscv64, linux/loong64: Full support
-//   - darwin/arm64: Partial (no SCTP, TCPInfo, multicast, SCM_RIGHTS)
+//   - darwin/arm64: Partial
 //   - freebsd/amd64: Cross-compile only
 package sock
