@@ -9,23 +9,20 @@ Types de socket sans allocation et machinerie d'adresses pour systèmes Unix en 
 
 Langue: [English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | [日本語](./README.ja.md) | **Français**
 
-## Quand Utiliser Ce Package
+## Vue d'ensemble
 
-Utilisez `sock` au lieu du package standard `net` quand vous avez besoin de :
+`sock` fournit un encodage sockaddr sans allocation, des opérations de socket non bloquantes, le contrôle des options de socket et l'accès à `iofd.FD` pour l'intégration avec des runtimes d'I/O asynchrone.
 
-- **Chemins chauds sans allocation** — Les types Sockaddr encodent directement au format noyau sans allocation sur le tas
-- **I/O non bloquante** — Les opérations retournent `iox.ErrWouldBlock` immédiatement au lieu de bloquer les goroutines
-- **Contrôle direct du noyau** — Options de socket, TCP_INFO et autres fonctionnalités bas niveau
-- **Intégration io_uring** — Tous les sockets exposent `iofd.FD` pour l'I/O asynchrone
+## Opérations
 
-Pour les applications typiques où la latence n'est pas critique, le package standard `net` fournit une API plus simple et plus portable.
-
-## Caractéristiques
-
-- **Adresses Sans Allocation** — Les types Sockaddr encodent directement au format noyau sans allocation sur le tas
-- **Support des Protocoles** — TCP, UDP, SCTP, Unix (stream/dgram/seqpacket), Raw IP
-- **Prêt pour io_uring** — Tous les sockets exposent `iofd.FD` pour l'intégration I/O asynchrone
-- **Appels Système Sans Overhead** — Interaction directe avec le noyau via assembleur `zcall`
+- **Adresses sans allocation** — Les types Sockaddr s'encodent directement en structures orientées noyau ; `Raw()` retourne un `unsafe.Pointer` sans marshaling ni allocation sur le tas.
+- **Syscalls sans surcharge** — Tous les chemins d'I/O utilisent des points d'entrée assembleur `zcall` qui appellent le noyau directement, sans passer par l'ordonnanceur du runtime Go.
+- **Support de protocoles** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket) et sockets IP bruts ; IPv4 et IPv6 pour chaque protocole.
+- **I/O adaptative** — Modèle de Progression à Trois Niveaux (Strike-Spin-Adapt) : les opérations retournent `iox.ErrWouldBlock` immédiatement par défaut ; le backoff avec deadline ne s'active que lorsqu'il est explicitement configuré
+- **Prêt pour io_uring** — Chaque socket expose `FD() *iofd.FD` pour une intégration directe avec `uring`, `takt` et autres runtimes d'I/O asynchrone.
+- **I/O UDP par lots** — `SendMessages`/`RecvMessages` utilisent `sendmmsg(2)`/`recvmmsg(2)` pour traiter plusieurs datagrammes par syscall ; les variantes adaptatives ajoutent le support des deadlines.
+- **Requêtes de liens réseau** — `Links`, `LinkByName` et `LinkByIndex` fournissent une énumération Linux native des liens via `zcall` ; utilisés en interne pour la résolution des identifiants de zone IPv6.
+- **Contrôle des options de socket** — Aides typées pour SO_KEEPALIVE, TCP_NODELAY, SO_LINGER, TCP_USER_TIMEOUT, TCP_NOTSENT_LOWAT, SO_BUSY_POLL, UDP_SEGMENT, UDP_GRO, et plus.
 
 ## Architecture
 
@@ -40,7 +37,7 @@ type Sockaddr interface {
 }
 ```
 
-Les types d'adresse (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embarquent les structures noyau brutes et retournent des pointeurs directement—pas de marshaling, pas d'allocation.
+Les types d'adresse (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embarquent les structures noyau brutes et retournent des pointeurs directement, sans marshaling et sans allocation.
 
 ### Hiérarchie des Types de Socket
 
@@ -69,15 +66,17 @@ zcall.Write() ← Point d'entrée assembleur (sans runtime Go)
 Noyau Linux
 ```
 
-Le package `zcall` fournit des points d'entrée syscall bruts qui contournent les hooks du runtime Go, éliminant l'overhead du scheduler pour les chemins critiques en latence.
+Le package `zcall` fournit des points d'entrée syscall bruts pour l'interaction directe avec le noyau depuis `sock`.
 
 ### Sémantiques d'I/O Adaptative
 
-Le package implémente le modèle **Strike-Spin-Adapt** pour l'I/O non bloquante :
+Le package suit le **Modèle de Progression à Trois Niveaux** (Strike-Spin-Adapt) pour l'I/O non bloquante :
 
-1. **Strike** : Exécution directe de syscall (non bloquante)
-2. **Spin** : Synchronisation au niveau matériel (gérée par `sox` si nécessaire)
-3. **Adapt** : Backoff logiciel ajusté pour le réseau lorsque des deadlines sont définis
+1. **Strike** : Appel système — accès direct au noyau via `zcall`
+2. **Spin** : Yield matériel — synchronisation atomique locale (`spin.Pause`)
+3. **Adapt** : Backoff logiciel — attente de disponibilité I/O externe (sommeil progressif)
+
+sock implémente **Strike** et **Adapt**. Spin n'est pas utilisé ici car les opérations socket attendent le noyau ou un pair réseau, pas des atomiques locaux.
 
 **Comportements clés :**
 
@@ -219,6 +218,14 @@ sock.SetUDPSegment(conn.FD(), 1400)  // Taille de segment
 sock.SetUDPGRO(conn.FD(), true)
 ```
 
+### Liens Réseau Linux
+
+```go
+links, _ := sock.Links()
+lo, _ := sock.LinkByName("lo")
+byIndex, _ := sock.LinkByIndex(lo.Index)
+```
+
 ### Gestion des Erreurs
 
 ```go
@@ -261,7 +268,7 @@ var _ sock.Addr = addr      // Compatible net.Addr
 // des performances sans allocation, pas net.Conn comme requis par net.Listener.
 ```
 
-## Plateformes Supportées
+## Support de Plateforme
 
 | Plateforme | Statut |
 |------------|--------|
@@ -269,11 +276,11 @@ var _ sock.Addr = addr      // Compatible net.Addr
 | linux/arm64 | Complet |
 | linux/riscv64 | Complet |
 | linux/loong64 | Complet |
-| darwin/arm64 | Partiel (sans SCTP, TCPInfo, multicast, SCM_RIGHTS) |
+| darwin/arm64 | Partiel |
 | freebsd/amd64 | Cross-compile uniquement |
 
 ## Licence
 
-MIT — voir [LICENSE](./LICENSE).
+MIT, voir [LICENSE](./LICENSE).
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

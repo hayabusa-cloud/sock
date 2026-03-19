@@ -9,23 +9,20 @@ Go 语言零分配套接字类型与地址处理库（Unix 系统）。
 
 语言: [English](./README.md) | **简体中文** | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
 
-## 何时使用本包
+## 概述
 
-在以下场景中使用 `sock` 代替标准 `net` 包：
+`sock` 提供零分配的 sockaddr 编码、非阻塞套接字操作、套接字选项控制，以及用于接入异步 I/O 运行时的 `iofd.FD` 访问。
 
-- **零分配热路径** — Sockaddr 类型直接编码为内核格式，无需堆分配
-- **非阻塞 I/O** — 操作立即返回 `iox.ErrWouldBlock` 而非阻塞 goroutine
-- **直接内核控制** — 套接字选项、TCP_INFO 及其他底层功能
-- **io_uring 集成** — 所有套接字暴露 `iofd.FD` 用于异步 I/O
+## 操作
 
-对于延迟不敏感的典型应用，标准 `net` 包提供了更简单、更具移植性的 API。
-
-## 特性
-
-- **零分配地址** — Sockaddr 类型直接编码为内核格式，无需堆分配
-- **协议支持** — TCP、UDP、SCTP、Unix（流/数据报/顺序包）、Raw IP
-- **io_uring 就绪** — 所有套接字暴露 `iofd.FD` 以集成异步 I/O
-- **零开销系统调用** — 通过 `zcall` 汇编直接与内核交互
+- **零分配地址** — Sockaddr 类型直接编码为内核可用的结构；`Raw()` 返回 `unsafe.Pointer`，无序列化，无堆分配。
+- **零开销系统调用** — 所有 I/O 路径均使用 `zcall` 汇编入口直接调用内核，无需经过 Go 运行时调度器。
+- **协议支持** — TCP、UDP、SCTP、Unix 域（stream/dgram/seqpacket）及原始 IP 套接字；每种协议均支持 IPv4 和 IPv6。
+- **自适应 I/O** — 三层进度模型（Strike-Spin-Adapt）：操作默认立即返回 `iox.ErrWouldBlock`；仅在显式设置截止时间时启用退避重试
+- **io_uring 就绪** — 每个套接字通过 `FD() *iofd.FD` 暴露文件描述符，可直接接入 `uring`、`takt` 及其他异步 I/O 运行时。
+- **UDP 批量 I/O** — `SendMessages`/`RecvMessages` 使用 `sendmmsg(2)`/`recvmmsg(2)` 在单次系统调用中处理多条数据报；自适应变体支持截止时间。
+- **网络链路查询** — `Links`、`LinkByName` 和 `LinkByIndex` 通过 `zcall` 提供 Linux 原生链路枚举；内部用于 IPv6 区域 ID 解析。
+- **套接字选项控制** — 类型安全的辅助函数，覆盖 SO_KEEPALIVE、TCP_NODELAY、SO_LINGER、TCP_USER_TIMEOUT、TCP_NOTSENT_LOWAT、SO_BUSY_POLL、UDP_SEGMENT、UDP_GRO 等。
 
 ## 架构
 
@@ -40,7 +37,7 @@ type Sockaddr interface {
 }
 ```
 
-地址类型（`SockaddrInet4`、`SockaddrInet6`、`SockaddrUnix`）内嵌原始内核结构并直接返回指针——无需序列化，无需分配。
+地址类型（`SockaddrInet4`、`SockaddrInet6`、`SockaddrUnix`）内嵌原始内核结构并直接返回指针，无需序列化，也无需分配。
 
 ### 套接字类型层次
 
@@ -69,15 +66,17 @@ zcall.Write() ← 汇编入口（绕过 Go 运行时）
 Linux 内核
 ```
 
-`zcall` 包提供原始系统调用入口点，绕过 Go 运行时钩子，消除延迟敏感路径的调度开销。
+`zcall` 包为 `sock` 提供直接面向内核的原始系统调用入口。
 
 ### 自适应 I/O 语义
 
-本包实现了用于非阻塞 I/O 的 **Strike-Spin-Adapt** 模型：
+本包遵循非阻塞 I/O 的**三层进度模型**（Strike-Spin-Adapt）：
 
-1. **Strike**：直接系统调用执行（非阻塞）
-2. **Spin**：硬件级同步（如需要由 `sox` 处理）
-3. **Adapt**：设置截止时间时通过网络调优的软件退避
+1. **Strike**：系统调用 — 通过 `zcall` 直接命中内核
+2. **Spin**：硬件让步 — 本地原子同步（`spin.Pause`）
+3. **Adapt**：软件退避 — 外部 I/O 就绪等待（渐进式休眠）
+
+sock 实现了 **Strike** 和 **Adapt**。由于套接字操作等待的是内核或网络对端而非本地原子操作，因此不使用 Spin。
 
 **关键行为：**
 
@@ -219,6 +218,14 @@ sock.SetUDPSegment(conn.FD(), 1400)  // 分段大小
 sock.SetUDPGRO(conn.FD(), true)
 ```
 
+### Linux 网络链路
+
+```go
+links, _ := sock.Links()
+lo, _ := sock.LinkByName("lo")
+byIndex, _ := sock.LinkByIndex(lo.Index)
+```
+
 ### 错误处理
 
 ```go
@@ -261,7 +268,7 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 // 零分配性能，而非 net.Listener 要求的 net.Conn。
 ```
 
-## 支持的平台
+## 平台支持
 
 | 平台 | 状态 |
 |------|------|
@@ -269,11 +276,11 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 | linux/arm64 | 完整 |
 | linux/riscv64 | 完整 |
 | linux/loong64 | 完整 |
-| darwin/arm64 | 部分（无 SCTP、TCPInfo、组播、SCM_RIGHTS）|
+| darwin/arm64 | 部分 |
 | freebsd/amd64 | 仅交叉编译 |
 
 ## 许可证
 
-MIT — 详见 [LICENSE](./LICENSE)。
+MIT，详见 [LICENSE](./LICENSE)。
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

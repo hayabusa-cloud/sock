@@ -9,23 +9,20 @@ Tipos de socket sin asignaciones y maquinaria de direcciones para sistemas Unix 
 
 Idioma: [English](./README.md) | [简体中文](./README.zh-CN.md) | **Español** | [日本語](./README.ja.md) | [Français](./README.fr.md)
 
-## Cuándo Usar Este Paquete
+## Resumen
 
-Use `sock` en lugar del paquete estándar `net` cuando necesite:
+`sock` proporciona codificación sockaddr sin asignaciones, operaciones de socket no bloqueantes, control de opciones de socket y acceso a `iofd.FD` para integrarse con runtimes de I/O asíncrona.
 
-- **Rutas calientes sin asignaciones** — Los tipos Sockaddr codifican directamente al formato del kernel sin asignación de heap
-- **I/O no bloqueante** — Las operaciones retornan `iox.ErrWouldBlock` inmediatamente en lugar de bloquear goroutines
-- **Control directo del kernel** — Opciones de socket, TCP_INFO y otras características de bajo nivel
-- **Integración con io_uring** — Todos los sockets exponen `iofd.FD` para I/O asíncrona
+## Operaciones
 
-Para aplicaciones típicas donde la latencia no es crítica, el paquete estándar `net` proporciona una API más simple y portable.
-
-## Características
-
-- **Direcciones Sin Asignaciones** — Los tipos Sockaddr codifican directamente al formato del kernel sin asignación de heap
-- **Soporte de Protocolos** — TCP, UDP, SCTP, Unix (stream/dgram/seqpacket), Raw IP
-- **Listo para io_uring** — Todos los sockets exponen `iofd.FD` para integración de I/O asíncrona
-- **Syscalls Sin Overhead** — Interacción directa con el kernel via ensamblador `zcall`
+- **Direcciones sin asignación** — Los tipos Sockaddr se codifican directamente en estructuras orientadas al kernel; `Raw()` devuelve un `unsafe.Pointer` sin marshaling ni asignación en el heap.
+- **Syscalls sin sobrecarga** — Todos los caminos de I/O usan puntos de entrada de ensamblador `zcall` que llaman al kernel directamente, sin pasar por el planificador del runtime de Go.
+- **Soporte de protocolos** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket) y sockets IP raw; IPv4 e IPv6 para cada protocolo.
+- **I/O adaptativa** — Modelo de Progreso de Tres Niveles (Strike-Spin-Adapt): las operaciones devuelven `iox.ErrWouldBlock` inmediatamente por defecto; el backoff con deadline se activa solo cuando se configura explícitamente
+- **Listo para io_uring** — Cada socket expone `FD() *iofd.FD` para integración directa con `uring`, `takt` y otros runtimes de I/O asíncrona.
+- **I/O UDP por lotes** — `SendMessages`/`RecvMessages` usan `sendmmsg(2)`/`recvmmsg(2)` para procesar múltiples datagramas por syscall; las variantes adaptativas añaden soporte de deadlines.
+- **Consultas de enlaces de red** — `Links`, `LinkByName` y `LinkByIndex` proveen enumeración de enlaces Linux nativa via `zcall`; usados internamente para resolución de IDs de zona IPv6.
+- **Control de opciones de socket** — Helpers tipados para SO_KEEPALIVE, TCP_NODELAY, SO_LINGER, TCP_USER_TIMEOUT, TCP_NOTSENT_LOWAT, SO_BUSY_POLL, UDP_SEGMENT, UDP_GRO, y más.
 
 ## Arquitectura
 
@@ -40,7 +37,7 @@ type Sockaddr interface {
 }
 ```
 
-Los tipos de dirección (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embeben estructuras kernel crudas y devuelven punteros directamente—sin marshaling, sin asignación.
+Los tipos de dirección (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embeben estructuras kernel crudas y devuelven punteros directamente, sin marshaling y sin asignación.
 
 ### Jerarquía de Tipos de Socket
 
@@ -69,15 +66,17 @@ zcall.Write() ← Punto de entrada en ensamblador (sin runtime Go)
 Kernel Linux
 ```
 
-El paquete `zcall` proporciona puntos de entrada de syscall crudos que evitan los hooks del runtime de Go, eliminando el overhead del scheduler para rutas críticas de latencia.
+El paquete `zcall` proporciona puntos de entrada de syscall crudos para interacción directa con el kernel desde `sock`.
 
 ### Semánticas de I/O Adaptativa
 
-El paquete implementa el modelo **Strike-Spin-Adapt** para I/O no bloqueante:
+El paquete sigue el **Modelo de Progreso de Tres Niveles** (Strike-Spin-Adapt) para I/O no bloqueante:
 
-1. **Strike**: Ejecución directa de syscall (no bloqueante)
-2. **Spin**: Sincronización a nivel de hardware (manejada por `sox` si es necesario)
-3. **Adapt**: Backoff de software ajustado para red cuando se establecen deadlines
+1. **Strike**: Llamada al sistema — acceso directo al kernel vía `zcall`
+2. **Spin**: Yield de hardware — sincronización atómica local (`spin.Pause`)
+3. **Adapt**: Backoff de software — espera de disponibilidad de I/O externa (sleep progresivo)
+
+sock implementa **Strike** y **Adapt**. Spin no se utiliza aquí porque las operaciones de socket esperan al kernel o a un peer de red, no a atómicas locales.
 
 **Comportamientos clave:**
 
@@ -219,6 +218,14 @@ sock.SetUDPSegment(conn.FD(), 1400)  // Tamaño de segmento
 sock.SetUDPGRO(conn.FD(), true)
 ```
 
+### Enlaces de Red en Linux
+
+```go
+links, _ := sock.Links()
+lo, _ := sock.LinkByName("lo")
+byIndex, _ := sock.LinkByIndex(lo.Index)
+```
+
 ### Manejo de Errores
 
 ```go
@@ -261,7 +268,7 @@ var _ sock.Addr = addr      // Compatible con net.Addr
 // rendimiento sin asignaciones, no net.Conn como requiere net.Listener.
 ```
 
-## Plataformas Soportadas
+## Soporte de Plataforma
 
 | Plataforma | Estado |
 |------------|--------|
@@ -269,11 +276,11 @@ var _ sock.Addr = addr      // Compatible con net.Addr
 | linux/arm64 | Completo |
 | linux/riscv64 | Completo |
 | linux/loong64 | Completo |
-| darwin/arm64 | Parcial (sin SCTP, TCPInfo, multicast, SCM_RIGHTS) |
+| darwin/arm64 | Parcial |
 | freebsd/amd64 | Solo cross-compile |
 
 ## Licencia
 
-MIT — ver [LICENSE](./LICENSE).
+MIT, ver [LICENSE](./LICENSE).
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

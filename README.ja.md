@@ -9,23 +9,20 @@ Go言語向けゼロアロケーションソケット型とアドレス処理ラ
 
 言語: [English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | **日本語** | [Français](./README.fr.md)
 
-## このパッケージを使用するタイミング
+## 概要
 
-標準`net`パッケージの代わりに`sock`を使用するケース：
+`sock` は、ゼロアロケーションの sockaddr エンコード、ノンブロッキングなソケット操作、ソケットオプション制御、および非同期 I/O ランタイムと統合するための `iofd.FD` アクセスを提供します。
 
-- **ゼロアロケーションホットパス** — Sockaddr型はヒープ割り当てなしで直接カーネル形式にエンコード
-- **ノンブロッキングI/O** — ゴルーチンをブロックする代わりに即座に`iox.ErrWouldBlock`を返す
-- **直接カーネル制御** — ソケットオプション、TCP_INFO、その他の低レベル機能
-- **io_uring統合** — すべてのソケットが非同期I/O用に`iofd.FD`を公開
+## 操作
 
-レイテンシが重要でない一般的なアプリケーションでは、標準`net`パッケージがよりシンプルで移植性の高いAPIを提供します。
-
-## 特徴
-
-- **ゼロアロケーションアドレス** — Sockaddr型はヒープ割り当てなしで直接カーネル形式にエンコード
-- **プロトコルサポート** — TCP、UDP、SCTP、Unix（ストリーム/データグラム/シーケンスパケット）、Raw IP
-- **io_uring対応** — すべてのソケットが非同期I/O統合用に`iofd.FD`を公開
-- **ゼロオーバーヘッドシステムコール** — `zcall`アセンブリによる直接カーネル操作
+- **ゼロアロケーションアドレス** — Sockaddr 型はカーネル向け構造体へ直接エンコード；`Raw()` はマーシャリングなし・ヒープ確保なしで `unsafe.Pointer` を返します。
+- **ゼロオーバーヘッドシステムコール** — すべての I/O パスは `zcall` アセンブリエントリポイントを通じてカーネルを直接呼び出し、Go ランタイムスケジューラを経由しません。
+- **プロトコルサポート** — TCP、UDP、SCTP、Unix ドメイン（stream/dgram/seqpacket）、および raw IP ソケット；各プロトコルで IPv4・IPv6 に対応。
+- **適応型 I/O** — 三層プログレスモデル（Strike-Spin-Adapt）：デフォルトで操作は即座に `iox.ErrWouldBlock` を返し、デッドラインが設定された場合のみバックオフリトライを有効化します
+- **io_uring 対応** — すべてのソケットは `FD() *iofd.FD` でファイルディスクリプタを公開し、`uring`・`takt` などの非同期 I/O ランタイムと直接統合できます。
+- **UDP バッチ I/O** — `SendMessages`/`RecvMessages` は `sendmmsg(2)`/`recvmmsg(2)` を使用し、1 回のシステムコールで複数のデータグラムを処理；適応型バリアントはデッドラインに対応。
+- **ネットワークリンク照会** — `Links`・`LinkByName`・`LinkByIndex` は `zcall` を通じた Linux ネイティブのリンク列挙を提供；内部で IPv6 ゾーン ID 解決に使用。
+- **ソケットオプション制御** — SO_KEEPALIVE・TCP_NODELAY・SO_LINGER・TCP_USER_TIMEOUT・TCP_NOTSENT_LOWAT・SO_BUSY_POLL・UDP_SEGMENT・UDP_GRO など向けの型安全なヘルパー。
 
 ## アーキテクチャ
 
@@ -40,7 +37,7 @@ type Sockaddr interface {
 }
 ```
 
-アドレス型（`SockaddrInet4`、`SockaddrInet6`、`SockaddrUnix`）は生のカーネル構造体を埋め込み、ポインタを直接返します——マーシャリングなし、アロケーションなし。
+アドレス型（`SockaddrInet4`、`SockaddrInet6`、`SockaddrUnix`）は生のカーネル構造体を埋め込み、マーシャリングやアロケーションなしでポインタを直接返します。
 
 ### ソケット型階層
 
@@ -69,15 +66,17 @@ zcall.Write() ← アセンブリエントリポイント（Goランタイムを
 Linuxカーネル
 ```
 
-`zcall`パッケージはGoランタイムのフックをバイパスする生のシステムコールエントリポイントを提供し、レイテンシクリティカルなパスのスケジューラオーバーヘッドを排除します。
+`zcall`パッケージは、`sock` からカーネルへ直接アクセスするための生のシステムコールエントリポイントを提供します。
 
 ### 適応型I/Oセマンティクス
 
-本パッケージはノンブロッキングI/O向けの**Strike-Spin-Adapt**モデルを実装しています：
+本パッケージはノンブロッキングI/O向けの**三層プログレスモデル**（Strike-Spin-Adapt）に従います：
 
-1. **Strike**: 直接システムコール実行（ノンブロッキング）
-2. **Spin**: ハードウェアレベル同期（必要に応じて`sox`が処理）
-3. **Adapt**: デッドライン設定時のネットワーク調整型ソフトウェアバックオフ
+1. **Strike**: システムコール — `zcall`経由でカーネルへ直接呼び出し
+2. **Spin**: ハードウェアイールド — ローカルアトミック同期（`spin.Pause`）
+3. **Adapt**: ソフトウェアバックオフ — 外部I/O準備待ち（漸進的スリープ）
+
+sockは**Strike**と**Adapt**を実装します。ソケット操作はカーネルやネットワークピアを待機するため、ローカルアトミックスではなく、Spinは使用しません。
 
 **主な動作：**
 
@@ -219,6 +218,14 @@ sock.SetUDPSegment(conn.FD(), 1400)  // セグメントサイズ
 sock.SetUDPGRO(conn.FD(), true)
 ```
 
+### Linux ネットワークリンク
+
+```go
+links, _ := sock.Links()
+lo, _ := sock.LinkByName("lo")
+byIndex, _ := sock.LinkByIndex(lo.Index)
+```
+
 ### エラー処理
 
 ```go
@@ -261,7 +268,7 @@ var _ sock.Addr = addr      // net.Addr互換
 // net.Connではなく、具体的な型（*TCPConn, *UnixConn）を返します。
 ```
 
-## サポートプラットフォーム
+## プラットフォームサポート
 
 | プラットフォーム | 状態 |
 |-----------------|------|
@@ -269,11 +276,11 @@ var _ sock.Addr = addr      // net.Addr互換
 | linux/arm64 | フル |
 | linux/riscv64 | フル |
 | linux/loong64 | フル |
-| darwin/arm64 | 部分的（SCTP、TCPInfo、マルチキャスト、SCM_RIGHTSなし）|
+| darwin/arm64 | 部分的 |
 | freebsd/amd64 | クロスコンパイルのみ |
 
 ## ライセンス
 
-MIT — [LICENSE](./LICENSE)を参照。
+MIT。[LICENSE](./LICENSE)を参照。
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)
