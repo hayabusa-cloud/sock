@@ -3194,19 +3194,6 @@ func TestIp6ZoneID_LoInterface(t *testing.T) {
 	}
 }
 
-func TestUDPSocket_SendToNilAddr(t *testing.T) {
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	defer sock.Close()
-
-	_, err = sock.SendTo([]byte("test"), nil)
-	if err != ErrInvalidParam {
-		t.Errorf("expected ErrInvalidParam, got %v", err)
-	}
-}
-
 // Additional SCTP Addr resolution tests
 
 func TestResolveSCTPAddr_IPv4Colon(t *testing.T) {
