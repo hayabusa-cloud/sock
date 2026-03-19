@@ -8,9 +8,9 @@ import "net"
 
 // Link is a snapshot of a network link's attributes.
 type Link struct {
-	Index        int
-	MTU          int
-	Name         string
-	HardwareAddr net.HardwareAddr
-	Flags        net.Flags
+	Index        int              // Interface index (if_index).
+	MTU          int              // Maximum transmission unit in bytes.
+	Name         string           // Interface name (e.g., "eth0", "lo").
+	HardwareAddr net.HardwareAddr // MAC address; nil for loopback and zero hardware addresses.
+	Flags        net.Flags        // Interface flags (net.FlagUp, net.FlagLoopback, etc.).
 }
