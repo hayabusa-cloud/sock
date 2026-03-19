@@ -9,6 +9,7 @@ package sock
 import (
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -3150,9 +3151,42 @@ func TestIp6ZoneString_InvalidID(t *testing.T) {
 }
 
 func TestIp6ZoneID_NumericFallback(t *testing.T) {
-	id := ip6ZoneID("42")
-	if id != 42 {
-		t.Errorf("Expected numeric fallback 42, got %d", id)
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("Interfaces: %v", err)
+	}
+
+	used := make(map[string]struct{}, len(ifaces))
+	for _, iface := range ifaces {
+		used[iface.Name] = struct{}{}
+	}
+
+	zone := ""
+	for candidate := 1; candidate <= 1<<16; candidate++ {
+		name := strconv.Itoa(candidate)
+		if _, ok := used[name]; !ok {
+			zone = name
+			break
+		}
+	}
+	if zone == "" {
+		t.Skip("No unused numeric interface name available for fallback test")
+	}
+
+	id := ip6ZoneID(zone)
+	want, err := strconv.Atoi(zone)
+	if err != nil {
+		t.Fatalf("Atoi(%q): %v", zone, err)
+	}
+	if id != want {
+		t.Errorf("Expected numeric fallback %d for zone %q, got %d", want, zone, id)
+	}
+}
+
+func TestIp6ZoneID_NumericOverflow(t *testing.T) {
+	id := ip6ZoneID("4294967296")
+	if id != 0 {
+		t.Errorf("Expected overflow to return 0, got %d", id)
 	}
 }
 

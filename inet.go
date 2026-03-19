@@ -267,11 +267,11 @@ func ip6ZoneID(zone string) int {
 	if index := linkIndexByName(zone); index != 0 {
 		return index
 	}
-	index, err := strconv.Atoi(zone)
-	if err != nil || index < 0 {
+	index, err := strconv.ParseUint(zone, 10, 32)
+	if err != nil {
 		return 0
 	}
-	return index
+	return int(index)
 }
 
 func ip6ZoneString(id int) string {
