@@ -264,19 +264,22 @@ func ip6ZoneID(zone string) int {
 	if zone == "" {
 		return 0
 	}
-	i, err := net.InterfaceByName(zone)
-	if err != nil {
-		return 0 // Invalid zone name, return 0 (unspecified)
+	if index := linkIndexByName(zone); index != 0 {
+		return index
 	}
-	return i.Index
+	index, err := strconv.ParseUint(zone, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int(index)
 }
 
 func ip6ZoneString(id int) string {
 	if id == 0 {
 		return ""
 	}
-	if i, err := net.InterfaceByIndex(id); err == nil {
-		return i.Name
+	if name := linkNameByIndex(id); name != "" {
+		return name
 	}
-	return ""
+	return strconv.Itoa(id)
 }

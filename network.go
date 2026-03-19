@@ -33,9 +33,9 @@ var (
 type NetworkType int
 
 const (
-	NetworkUnix NetworkType = 1
-	NetworkIPv4 NetworkType = 2
-	NetworkIPv6 NetworkType = 10
+	NetworkUnix NetworkType = 1  // AF_UNIX  — Unix domain sockets.
+	NetworkIPv4 NetworkType = 2  // AF_INET  — IPv4.
+	NetworkIPv6 NetworkType = 10 // AF_INET6 — IPv6.
 )
 
 // Socket is a network socket with handle-based resource management.

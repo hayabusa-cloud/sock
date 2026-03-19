@@ -9,23 +9,20 @@ Zero-allocation socket types and address machinery for Unix systems in Go.
 
 Language: **English** | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
 
-## When to Use This Package
+## Overview
 
-Use `sock` instead of the standard `net` package when you need:
+`sock` provides zero-allocation sockaddr encoding, non-blocking socket operations, socket option control, and `iofd.FD` access for integration with async I/O runtimes.
 
-- **Zero-allocation hot paths** — Sockaddr types encode directly to kernel format without heap allocation
-- **Non-blocking I/O** — Operations return `iox.ErrWouldBlock` immediately instead of blocking goroutines
-- **Direct kernel control** — Socket options, TCP_INFO, and other low-level features
-- **io_uring integration** — All sockets expose `iofd.FD` for async I/O
+## Operations
 
-For typical applications where latency is not critical, the standard `net` package provides a simpler and more portable API.
-
-## Features
-
-- **Zero-Allocation Addresses** — Sockaddr types encode directly to kernel format without heap allocation
-- **Protocol Support** — TCP, UDP, SCTP, Unix (stream/dgram/seqpacket), Raw IP
-- **io_uring Ready** — All sockets expose `iofd.FD` for async I/O integration
-- **Zero-Overhead Syscalls** — Direct kernel interaction via `zcall` assembly
+- **Zero-Allocation Addresses** — Sockaddr types encode directly to kernel-facing structures; `Raw()` returns an `unsafe.Pointer` with no marshaling and no heap allocation.
+- **Zero-Overhead Syscalls** — All I/O paths use `zcall` assembly entry points that call into the kernel without routing through the Go runtime scheduler.
+- **Protocol Support** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket), and raw IP sockets; IPv4 and IPv6 for each.
+- **Adaptive I/O** — Three-Tier Progress Model (Strike-Spin-Adapt): operations return `iox.ErrWouldBlock` immediately by default; deadline-driven backoff engages only when explicitly set
+- **io_uring Ready** — Every socket exposes `FD() *iofd.FD` for direct integration with `uring`, `takt`, and other async I/O runtimes.
+- **UDP Batch I/O** — `SendMessages`/`RecvMessages` use `sendmmsg(2)`/`recvmmsg(2)` to process multiple datagrams per syscall; adaptive variants add deadline support.
+- **Network Link Queries** — `Links`, `LinkByName`, and `LinkByIndex` provide Linux-native link enumeration via `zcall`; used internally for IPv6 zone ID resolution.
+- **Socket Option Control** — Type-safe helpers for SO_KEEPALIVE, TCP_NODELAY, SO_LINGER, TCP_USER_TIMEOUT, TCP_NOTSENT_LOWAT, SO_BUSY_POLL, UDP_SEGMENT, UDP_GRO, and more.
 
 ## Architecture
 
@@ -40,7 +37,7 @@ type Sockaddr interface {
 }
 ```
 
-Address types (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embed raw kernel structures and return pointers directly—no marshaling, no allocation.
+Address types (`SockaddrInet4`, `SockaddrInet6`, `SockaddrUnix`) embed raw kernel structures and return pointers directly, with no marshaling and no allocation.
 
 ### Socket Type Hierarchy
 
@@ -69,15 +66,17 @@ zcall.Write() ← Assembly entry point (no Go runtime)
 Linux Kernel
 ```
 
-The `zcall` package provides raw syscall entry points that bypass Go's runtime hooks, eliminating scheduler overhead for latency-critical paths.
+The `zcall` package provides raw syscall entry points for direct kernel interaction from `sock`.
 
 ### Adaptive I/O Semantics
 
-The package implements the **Strike-Spin-Adapt** model for non-blocking I/O:
+The package follows the **Three-Tier Progress Model** (Strike-Spin-Adapt) for non-blocking I/O:
 
-1. **Strike**: Direct syscall execution (non-blocking)
-2. **Spin**: Hardware-level synchronization (handled by `sox` if needed)
-3. **Adapt**: Network-tuned software backoff when deadlines are set
+1. **Strike**: System call — direct kernel hit via `zcall`
+2. **Spin**: Hardware yield — local atomic synchronization (`spin.Pause`)
+3. **Adapt**: Software backoff — external I/O readiness (progressive sleep)
+
+sock implements **Strike** and **Adapt**. Spin is not used here because socket operations wait on the kernel or a network peer, not on local atomics.
 
 **Key behaviors:**
 
@@ -219,6 +218,14 @@ sock.SetUDPSegment(conn.FD(), 1400)  // Segment size
 sock.SetUDPGRO(conn.FD(), true)
 ```
 
+### Linux Network Links
+
+```go
+links, _ := sock.Links()
+lo, _ := sock.LinkByName("lo")
+byIndex, _ := sock.LinkByIndex(lo.Index)
+```
+
 ### Error Handling
 
 ```go
@@ -261,7 +268,7 @@ var _ sock.Addr = addr      // net.Addr compatible
 // zero-allocation performance, not net.Conn as net.Listener requires.
 ```
 
-## Supported Platforms
+## Platform Support
 
 | Platform | Status |
 |----------|--------|
@@ -269,11 +276,11 @@ var _ sock.Addr = addr      // net.Addr compatible
 | linux/arm64 | Full |
 | linux/riscv64 | Full |
 | linux/loong64 | Full |
-| darwin/arm64 | Partial (no SCTP, TCPInfo, multicast, SCM_RIGHTS) |
+| darwin/arm64 | Partial |
 | freebsd/amd64 | Cross-compile only |
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT, see [LICENSE](./LICENSE).
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

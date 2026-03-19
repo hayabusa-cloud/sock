@@ -334,31 +334,11 @@ func ntohl(v uint32) uint32 {
 }
 
 func zoneToScopeID(zone string) uint32 {
-	if zone == "" {
-		return 0
-	}
-	var id uint32
-	for _, c := range zone {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		id = id*10 + uint32(c-'0')
-	}
-	return id
+	return uint32(ip6ZoneID(zone))
 }
 
 func scopeIDToZone(id uint32) string {
-	if id == 0 {
-		return ""
-	}
-	var buf [10]byte
-	n := len(buf)
-	for id > 0 {
-		n--
-		buf[n] = byte('0' + id%10)
-		id /= 10
-	}
-	return string(buf[n:])
+	return ip6ZoneString(int(id))
 }
 
 // GetSockname retrieves the local address of a socket.

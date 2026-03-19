@@ -9,6 +9,7 @@ package sock
 import (
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -412,16 +413,16 @@ func TestZoneConversions(t *testing.T) {
 		t.Errorf("Expected 0 for empty zone, got %d", id)
 	}
 
-	// Non-numeric zone (interface name) - should return 0 as simplified
-	id = zoneToScopeID("eth0")
+	// Unknown non-numeric zone should fall back to 0.
+	id = zoneToScopeID("nonexistent-interface-12345")
 	if id != 0 {
-		t.Errorf("Expected 0 for non-numeric zone, got %d", id)
+		t.Errorf("Expected 0 for unknown non-numeric zone, got %d", id)
 	}
 
-	// Round-trip numeric
+	// Numeric fallback should round-trip when there is no interface name.
 	zone := scopeIDToZone(42)
-	if zone != "42" {
-		t.Errorf("Expected '42', got %s", zone)
+	if zone == "" {
+		t.Fatal("Expected non-empty zone for numeric scope ID")
 	}
 
 	// Zero zone
@@ -1106,8 +1107,8 @@ func TestDecodeTCPAddr(t *testing.T) {
 		if addr.Port != 8080 {
 			t.Errorf("Expected port 8080, got %d", addr.Port)
 		}
-		if addr.Zone != "1" {
-			t.Errorf("Expected zone '1', got %s", addr.Zone)
+		if want := scopeIDToZone(1); addr.Zone != want {
+			t.Errorf("Expected zone %q, got %s", want, addr.Zone)
 		}
 	})
 
@@ -1161,8 +1162,8 @@ func TestDecodeUDPAddr(t *testing.T) {
 		if addr.Port != 5353 {
 			t.Errorf("Expected port 5353, got %d", addr.Port)
 		}
-		if addr.Zone != "2" {
-			t.Errorf("Expected zone '2', got %s", addr.Zone)
+		if want := scopeIDToZone(2); addr.Zone != want {
+			t.Errorf("Expected zone %q, got %s", want, addr.Zone)
 		}
 	})
 
@@ -1937,8 +1938,8 @@ func TestSockaddrToUDPAddr(t *testing.T) {
 		if addr.Port != 5353 {
 			t.Errorf("Expected port 5353, got %d", addr.Port)
 		}
-		if addr.Zone != "1" {
-			t.Errorf("Expected zone '1', got %s", addr.Zone)
+		if want := scopeIDToZone(1); addr.Zone != want {
+			t.Errorf("Expected zone %q, got %s", want, addr.Zone)
 		}
 	})
 
@@ -3144,8 +3145,48 @@ func TestIp6ZoneString_ZeroID(t *testing.T) {
 func TestIp6ZoneString_InvalidID(t *testing.T) {
 	// Very high ID that shouldn't exist
 	name := ip6ZoneString(999999)
-	if name != "" {
-		t.Errorf("Expected empty string for invalid ID, got %q", name)
+	if name != "999999" {
+		t.Errorf("Expected numeric fallback for invalid ID, got %q", name)
+	}
+}
+
+func TestIp6ZoneID_NumericFallback(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("Interfaces: %v", err)
+	}
+
+	used := make(map[string]struct{}, len(ifaces))
+	for _, iface := range ifaces {
+		used[iface.Name] = struct{}{}
+	}
+
+	zone := ""
+	for candidate := 1; candidate <= 1<<16; candidate++ {
+		name := strconv.Itoa(candidate)
+		if _, ok := used[name]; !ok {
+			zone = name
+			break
+		}
+	}
+	if zone == "" {
+		t.Skip("No unused numeric interface name available for fallback test")
+	}
+
+	id := ip6ZoneID(zone)
+	want, err := strconv.Atoi(zone)
+	if err != nil {
+		t.Fatalf("Atoi(%q): %v", zone, err)
+	}
+	if id != want {
+		t.Errorf("Expected numeric fallback %d for zone %q, got %d", want, zone, id)
+	}
+}
+
+func TestIp6ZoneID_NumericOverflow(t *testing.T) {
+	id := ip6ZoneID("4294967296")
+	if id != 0 {
+		t.Errorf("Expected overflow to return 0, got %d", id)
 	}
 }
 

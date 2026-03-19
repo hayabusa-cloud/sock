@@ -2507,8 +2507,8 @@ func TestIp6ZoneID(t *testing.T) {
 
 	// Test with invalid index
 	str = ip6ZoneString(99999)
-	if str != "" {
-		t.Logf("zone string for 99999: %q", str)
+	if str != "99999" {
+		t.Errorf("expected numeric fallback for invalid index, got %q", str)
 	}
 }
 
@@ -6505,8 +6505,8 @@ func TestDecodeSCTPAddr_IPv6(t *testing.T) {
 	if addr.Port != 9000 {
 		t.Errorf("Port: expected 9000, got %d", addr.Port)
 	}
-	if addr.Zone != "1" {
-		t.Errorf("Zone: expected '1', got '%s'", addr.Zone)
+	if want := scopeIDToZone(1); addr.Zone != want {
+		t.Errorf("Zone: expected %q, got '%s'", want, addr.Zone)
 	}
 }
 
@@ -6523,8 +6523,8 @@ func TestDecodeTCPAddr_IPv6WithZone(t *testing.T) {
 	if addr == nil {
 		t.Fatal("decodeTCPAddr returned nil")
 	}
-	if addr.Zone != "2" {
-		t.Errorf("Zone: expected '2', got '%s'", addr.Zone)
+	if want := scopeIDToZone(2); addr.Zone != want {
+		t.Errorf("Zone: expected %q, got '%s'", want, addr.Zone)
 	}
 }
 
@@ -6541,8 +6541,8 @@ func TestDecodeUDPAddr_IPv6WithZone(t *testing.T) {
 	if addr == nil {
 		t.Fatal("decodeUDPAddr returned nil")
 	}
-	if addr.Zone != "3" {
-		t.Errorf("Zone: expected '3', got '%s'", addr.Zone)
+	if want := scopeIDToZone(3); addr.Zone != want {
+		t.Errorf("Zone: expected %q, got '%s'", want, addr.Zone)
 	}
 }
 
@@ -8784,10 +8784,10 @@ func TestIp6ZoneString_Coverage(t *testing.T) {
 		t.Errorf("expected empty, got '%s'", s)
 	}
 
-	// Invalid index returns empty
+	// Invalid index falls back to the numeric string.
 	s = ip6ZoneString(99999)
-	if s != "" {
-		t.Errorf("expected empty for invalid index, got '%s'", s)
+	if s != "99999" {
+		t.Errorf("expected numeric fallback for invalid index, got '%s'", s)
 	}
 }
 
@@ -9208,13 +9208,13 @@ func TestUnixAddrToSockaddr_Nil(t *testing.T) {
 
 func TestScopeIDToZone_LargeValue(t *testing.T) {
 	s := scopeIDToZone(4294967295) // max uint32
-	if s == "" {
-		t.Error("expected non-empty string for max uint32")
+	if s != "4294967295" {
+		t.Errorf("expected numeric fallback for max uint32, got %q", s)
 	}
 }
 
 func TestZoneToScopeID_NonNumeric(t *testing.T) {
-	id := zoneToScopeID("eth0")
+	id := zoneToScopeID("nonexistent-interface-12345")
 	if id != 0 {
 		t.Errorf("expected 0 for non-numeric zone, got %d", id)
 	}
@@ -10630,6 +10630,98 @@ func TestTCPSocket_DefaultsAppliedCheck(t *testing.T) {
 	}
 	if !reuse {
 		t.Error("expected SO_REUSEADDR enabled by default")
+	}
+}
+
+func TestLinkFrom_CopiesAndNormalizesHardwareAddr(t *testing.T) {
+	src := zcall.Link{
+		Index:        7,
+		MTU:          1500,
+		Name:         "eth-test",
+		HardwareAddr: []byte{0x02, 0x11, 0x22, 0x33, 0x44, 0x55},
+		Flags:        zcall.IFF_UP | zcall.IFF_BROADCAST | zcall.IFF_RUNNING | zcall.IFF_MULTICAST,
+	}
+
+	got := linkFrom(src)
+	if got.Index != src.Index || got.MTU != src.MTU || got.Name != src.Name {
+		t.Fatalf("linkFrom metadata mismatch: got %+v, src %+v", got, src)
+	}
+	if got.Flags != net.FlagUp|net.FlagBroadcast|net.FlagRunning|net.FlagMulticast {
+		t.Fatalf("linkFrom flags = %v", got.Flags)
+	}
+	if got.HardwareAddr.String() != "02:11:22:33:44:55" {
+		t.Fatalf("linkFrom hardware addr = %q", got.HardwareAddr)
+	}
+	src.HardwareAddr[0] = 0xff
+	if got.HardwareAddr[0] != 0x02 {
+		t.Fatal("linkFrom did not copy hardware address")
+	}
+
+	loopback := linkFrom(zcall.Link{
+		Name:         "lo-test",
+		HardwareAddr: []byte{0x01, 0x02, 0x03},
+		Flags:        zcall.IFF_LOOPBACK,
+	})
+	if loopback.HardwareAddr != nil {
+		t.Fatalf("loopback hardware addr = %v, want nil", loopback.HardwareAddr)
+	}
+
+	zero := linkFrom(zcall.Link{
+		Name:         "zero-test",
+		HardwareAddr: []byte{0, 0, 0, 0, 0, 0},
+	})
+	if zero.HardwareAddr != nil {
+		t.Fatalf("zero hardware addr = %v, want nil", zero.HardwareAddr)
+	}
+}
+
+func TestIsZeroHardwareAddr(t *testing.T) {
+	if isZeroHardwareAddr(nil) {
+		t.Fatal("nil hardware address reported as zero")
+	}
+	if isZeroHardwareAddr(net.HardwareAddr{0, 1, 0}) {
+		t.Fatal("non-zero hardware address reported as zero")
+	}
+	if !isZeroHardwareAddr(net.HardwareAddr{0, 0, 0, 0}) {
+		t.Fatal("zero hardware address not detected")
+	}
+}
+
+func TestLinkFlags_AllSupportedBits(t *testing.T) {
+	flags := linkFlags(
+		zcall.IFF_UP |
+			zcall.IFF_BROADCAST |
+			zcall.IFF_LOOPBACK |
+			zcall.IFF_POINTOPOINT |
+			zcall.IFF_RUNNING |
+			zcall.IFF_MULTICAST,
+	)
+	want := net.FlagUp | net.FlagBroadcast | net.FlagLoopback | net.FlagPointToPoint | net.FlagRunning | net.FlagMulticast
+	if flags != want {
+		t.Fatalf("linkFlags = %v, want %v", flags, want)
+	}
+}
+
+func TestLinkLookupHelpers_InvalidAndLoopback(t *testing.T) {
+	if got := linkIndexByName(""); got != 0 {
+		t.Fatalf("linkIndexByName(empty) = %d, want 0", got)
+	}
+	if got := linkNameByIndex(0); got != "" {
+		t.Fatalf("linkNameByIndex(0) = %q, want empty", got)
+	}
+	if got := linkIndexByName("definitely-not-a-real-link-name"); got != 0 {
+		t.Fatalf("linkIndexByName(invalid) = %d, want 0", got)
+	}
+	if got := linkNameByIndex(-1); got != "" {
+		t.Fatalf("linkNameByIndex(-1) = %q, want empty", got)
+	}
+
+	idx := linkIndexByName("lo")
+	if idx == 0 {
+		t.Fatal("linkIndexByName(lo) = 0, want loopback index")
+	}
+	if got := linkNameByIndex(idx); got != "lo" {
+		t.Fatalf("linkNameByIndex(%d) = %q, want lo", idx, got)
 	}
 }
 
