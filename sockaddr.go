@@ -106,13 +106,7 @@ type SockaddrUnix struct {
 func NewSockaddrUnix(path string) *SockaddrUnix {
 	sa := &SockaddrUnix{}
 	initRawSockaddrUnix(&sa.raw, AF_UNIX)
-	n := copy(sa.raw.Path[:], path)
-	if n < len(sa.raw.Path) {
-		sa.raw.Path[n] = 0
-		sa.length = uint32(2 + n + 1) // Family + path + NUL terminator
-	} else {
-		sa.length = uint32(2 + n) // Family + path (no room for NUL)
-	}
+	sa.length = encodeUnixSockaddrPath(&sa.raw, path)
 	return sa
 }
 
@@ -125,52 +119,11 @@ func (sa *SockaddrUnix) Raw() (unsafe.Pointer, uint32) {
 func (sa *SockaddrUnix) Family() uint16 { return AF_UNIX }
 
 func (sa *SockaddrUnix) Path() string {
-	if sa.length < 2 {
-		// Fallback for zero-initialized struct: search for NUL
-		for i, b := range sa.raw.Path {
-			if b == 0 {
-				return string(sa.raw.Path[:i])
-			}
-		}
-		return ""
-	}
-
-	// Calculate path length from stored length field
-	// length = 2 (family) + path_bytes [+ NUL if present]
-	pathLen := int(sa.length) - 2
-	if pathLen <= 0 {
-		return ""
-	}
-	if pathLen > len(sa.raw.Path) {
-		pathLen = len(sa.raw.Path)
-	}
-
-	// Check for abstract socket (starts with NUL and has content after)
-	// Abstract sockets have path[0] == 0 with additional bytes
-	// Empty path case: pathLen == 1 and path[0] == 0 means empty pathname
-	if sa.raw.Path[0] == 0 && pathLen > 1 {
-		return string(sa.raw.Path[:pathLen])
-	}
-
-	// Pathname socket: stop at NUL terminator
-	for i := range pathLen {
-		if sa.raw.Path[i] == 0 {
-			return string(sa.raw.Path[:i])
-		}
-	}
-	return string(sa.raw.Path[:pathLen])
+	return unixSockaddrPath(&sa.raw, sa.length)
 }
 
 func (sa *SockaddrUnix) SetPath(path string) {
-	for i := range sa.raw.Path {
-		sa.raw.Path[i] = 0
-	}
-	n := copy(sa.raw.Path[:], path)
-	if n < len(sa.raw.Path) {
-		sa.length = uint32(2 + n + 1) // Family + path + NUL terminator
-	} else {
-		sa.length = uint32(2 + n) // Family + path (no room for NUL)
-	}
+	sa.length = encodeUnixSockaddrPath(&sa.raw, path)
 }
 
 // Address conversion functions.

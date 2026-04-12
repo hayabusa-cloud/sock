@@ -9,6 +9,41 @@ This is `sock`, a zero-allocation socket library for Go built on:
 
 Target: Linux kernel 6.18+, Go 1.26+
 
+## iox Outcome Algebra
+
+```text
+        failure
+       /       \
+ErrWouldBlock ErrMore
+       \       /
+          nil
+```
+
+- `nil`: completion for this call
+- `ErrWouldBlock`: no progress on this attempt; retry via the owned wait policy
+- `ErrMore`: progress happened; the operation stays active
+- other error: real failure
+
+Review by this algebra:
+
+- counts carry progress; errors carry control flow
+- `(n > 0, ErrMore)` and `(n > 0, ErrWouldBlock)` can be valid
+- preserve semantic sentinels across layers; do not wrap or collapse them into generic failure
+
+In `sock`, the default surface is pure non-blocking: direct read/write/message
+I/O with no deadline returns `ErrWouldBlock` when readiness is absent.
+Connect keeps `ErrInProgress` distinct, while Linux AF_UNIX may also surface
+pending as `iox.ErrWouldBlock`. Deadlines activate internal adaptive retry and
+may surface `ErrTimedOut` instead.
+
+## Three-Tier Progress Model
+
+- **Strike**: one direct non-blocking syscall via `zcall`
+- **Spin**: local CPU-core contention only; not a `sock` socket-readiness path
+- **Adapt**: external readiness wait; caller-owned loops above `sock` use
+  `iox.Backoff` or readiness/CQE waiting, while `sock` keeps its own adaptive
+  backoff internal
+
 ## Review Focus
 
 Only report issues that are:
@@ -31,7 +66,7 @@ Only report issues that are:
 ### Error Handling
 ```go
 // Semantic errors are control flow, not failures
-if err == iox.ErrWouldBlock { /* retry */ }
+if err == iox.ErrWouldBlock { /* return now, or retry via owned wait policy */ }
 if err == ErrInProgress { /* async connect */ }
 ```
 
@@ -60,8 +95,9 @@ if raw < 0 { return nil }
 
 1. Read the PR description for intent
 2. Check related files for existing patterns
-3. Understand Linux kernel behavior for socket operations
-4. Verify errno mappings against kernel documentation
+3. Check whether the path is pure non-blocking or deadline-driven adaptive I/O
+4. Understand Linux kernel behavior for the specific socket family
+5. Verify errno mappings against kernel documentation
 
 ## Review Output
 
@@ -72,7 +108,7 @@ if raw < 0 { return nil }
 
 ## Linux Socket Internals
 
-### Non-Blocking Connect Flow
+### Non-Blocking INET/TCP Connect Flow
 ```
 connect() → EINPROGRESS (async start)
    ↓
@@ -84,6 +120,10 @@ Returns: 0 (success), EISCONN (already connected), or actual error
 ```
 
 **Kernel behavior (af_inet.c)**: Second connect() on TCP_CLOSE calls `sock_error()` which atomically returns AND clears `sk_err`. The SO_ERROR path is effectively dead code.
+
+**Linux AF_UNIX note**: a pending non-blocking Unix-domain `connect(2)` may
+surface as `EAGAIN` / `EWOULDBLOCK` (`iox.ErrWouldBlock`), not only
+`EINPROGRESS`. Treat that as pending control flow, not a hard failure.
 
 ### Error Semantics
 

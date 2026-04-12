@@ -79,6 +79,9 @@ func (s *RawSocket) RecvFrom(buf []byte) (int, *IPAddr, error) {
 
 // SendTo sends a packet to the specified address.
 func (s *RawSocket) SendTo(buf []byte, addr *IPAddr) (int, error) {
+	if addr == nil {
+		return 0, ErrInvalidParam
+	}
 	raw := s.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed

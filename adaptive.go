@@ -121,7 +121,14 @@ func (d *deadlineState) writeExpired() bool {
 //     ErrTimedOut if deadline exceeded
 func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, error) {
 	// First attempt (Strike)
-	n, err := readFn()
+	var n int
+	var err error
+	for {
+		n, err = readFn()
+		if err != ErrInterrupted {
+			break
+		}
+	}
 	if err != iox.ErrWouldBlock {
 		return n, err
 	}
@@ -141,7 +148,12 @@ func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, err
 	for {
 		backoff.wait()
 
-		n, err = readFn()
+		for {
+			n, err = readFn()
+			if err != ErrInterrupted {
+				break
+			}
+		}
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return n, err
@@ -167,7 +179,14 @@ func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, err
 //     ErrTimedOut if deadline exceeded
 func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, error) {
 	// First attempt (Strike)
-	n, err := writeFn()
+	var n int
+	var err error
+	for {
+		n, err = writeFn()
+		if err != ErrInterrupted {
+			break
+		}
+	}
 	if err != iox.ErrWouldBlock {
 		return n, err
 	}
@@ -187,7 +206,12 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 	for {
 		backoff.wait()
 
-		n, err = writeFn()
+		for {
+			n, err = writeFn()
+			if err != ErrInterrupted {
+				break
+			}
+		}
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return n, err

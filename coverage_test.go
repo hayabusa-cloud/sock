@@ -69,6 +69,18 @@ func TestListenUDP6_Error(t *testing.T) {
 	}
 }
 
+func TestUDPSocket_SendToNilAddr(t *testing.T) {
+	sock, err := NewUDPSocket4()
+	if err != nil {
+		t.Fatalf("NewUDPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	if _, err := sock.SendTo([]byte("test"), nil); err != ErrInvalidParam {
+		t.Fatalf("SendTo(nil): got %v, want ErrInvalidParam", err)
+	}
+}
+
 func TestDialTCP4_Error(t *testing.T) {
 	// nil remote address should fail
 	_, err := DialTCP4(nil, nil)
@@ -4904,8 +4916,8 @@ func TestSockaddrUnix_Path_AbstractSocket(t *testing.T) {
 	sa.length = 2 + 4 // family + 4 bytes
 
 	path := sa.Path()
-	if len(path) != 4 || path[0] != 0 {
-		t.Errorf("abstract socket path: got %q (len=%d)", path, len(path))
+	if path != "@abc" {
+		t.Errorf("abstract socket path: got %q", path)
 	}
 }
 
@@ -8999,6 +9011,38 @@ func TestUnixConn_ReadFrom_Closed(t *testing.T) {
 
 // --- DialUnix with laddr ---
 
+func TestListenUnix_AutobindAddr(t *testing.T) {
+	ln, err := ListenUnix("unix", &UnixAddr{Name: "", Net: "unix"})
+	if err != nil {
+		t.Fatalf("ListenUnix autobind: %v", err)
+	}
+	defer ln.Close()
+
+	addr, ok := ln.Addr().(*UnixAddr)
+	if !ok || addr == nil {
+		t.Fatalf("expected *UnixAddr listener address, got %T", ln.Addr())
+	}
+	if len(addr.Name) == 0 || addr.Name[0] != '@' {
+		t.Fatalf("expected autobound abstract Unix address, got %#v", addr)
+	}
+}
+
+func TestListenUnixgram_AutobindLocalAddr(t *testing.T) {
+	conn, err := ListenUnixgram("unixgram", &UnixAddr{Name: "", Net: "unixgram"})
+	if err != nil {
+		t.Fatalf("ListenUnixgram autobind: %v", err)
+	}
+	defer conn.Close()
+
+	addr, ok := conn.LocalAddr().(*UnixAddr)
+	if !ok || addr == nil {
+		t.Fatalf("expected *UnixAddr local address, got %T", conn.LocalAddr())
+	}
+	if len(addr.Name) == 0 || addr.Name[0] != '@' {
+		t.Fatalf("expected autobound abstract Unix address, got %#v", addr)
+	}
+}
+
 func TestDialUnix_WithLaddr(t *testing.T) {
 	path := "@test-dial-laddr-" + time.Now().Format("150405.000")
 	ln, err := ListenUnix("unix", &UnixAddr{Name: path, Net: "unix"})
@@ -9015,6 +9059,32 @@ func TestDialUnix_WithLaddr(t *testing.T) {
 	}
 	if conn != nil {
 		defer conn.Close()
+	}
+}
+
+func TestDialUnix_WithEmptyLaddr_Autobind(t *testing.T) {
+	path := "@test-dial-empty-laddr-" + time.Now().Format("150405.000")
+	ln, err := ListenUnix("unix", &UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	defer ln.Close()
+
+	conn, err := DialUnix("unix", &UnixAddr{Name: "", Net: "unix"}, &UnixAddr{Name: path, Net: "unix"})
+	if err != nil && err != ErrInProgress {
+		t.Fatalf("DialUnix with empty laddr: %v", err)
+	}
+	if conn == nil {
+		t.Fatal("expected UnixConn")
+	}
+	defer conn.Close()
+
+	addr, ok := conn.LocalAddr().(*UnixAddr)
+	if !ok || addr == nil {
+		t.Fatalf("expected *UnixAddr local address, got %T", conn.LocalAddr())
+	}
+	if len(addr.Name) == 0 || addr.Name[0] != '@' {
+		t.Fatalf("expected autobound abstract local address, got %#v", addr)
 	}
 }
 
@@ -9151,8 +9221,8 @@ func TestSockaddrUnix_PathEdgeCases_Cov(t *testing.T) {
 	sa2.raw.Path[2] = 'b'
 	sa2.length = 2 + 3 // family + 3 bytes
 	p := sa2.Path()
-	if len(p) != 3 {
-		t.Errorf("expected 3-byte abstract path, got %d bytes: %q", len(p), p)
+	if p != "@ab" {
+		t.Errorf("expected '@ab', got %q", p)
 	}
 
 	// SetPath
@@ -9264,51 +9334,6 @@ func TestRawConn_WriteClosedFD(t *testing.T) {
 	if err != ErrClosed {
 		t.Errorf("expected ErrClosed, got %v", err)
 	}
-}
-
-// --- WriteMsgUDP deadline paths ---
-
-func TestWriteMsgUDP_WithDeadline(t *testing.T) {
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
-	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
-		sock.Close()
-		t.Fatalf("bind: %v", err)
-	}
-	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
-	defer conn.Close()
-
-	// Set write deadline to already expired
-	conn.SetWriteDeadline(time.Now().Add(-time.Second))
-
-	// Attempt WriteMsgUDP with expired deadline
-	_, _, err = conn.WriteMsgUDP([]byte("test"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
-	if err == nil {
-		// WriteMsgUDP might succeed on first try (non-blocking sendmsg)
-		// If first try succeeds, ErrWouldBlock never triggers deadline check
-	}
-}
-
-func TestWriteMsgUDP_NoDeadline_WouldBlock(t *testing.T) {
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
-	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
-		sock.Close()
-		t.Fatalf("bind: %v", err)
-	}
-	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
-	defer conn.Close()
-
-	// Send should succeed (non-blocking, just queues)
-	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
-	// Either succeeds or returns WouldBlock (no deadline, returns immediately)
-	_ = err
 }
 
 func TestWriteMsgUDP_WithOOB_Cov2(t *testing.T) {
@@ -9959,98 +9984,32 @@ func TestResolveSCTPAddr_BadAddress(t *testing.T) {
 	}
 }
 
-// --- WriteMsgUDP deadline paths (trigger EAGAIN by filling send buffer) ---
-
-func TestWriteMsgUDP_DeadlinePaths(t *testing.T) {
-	// Create a connected UDP pair to trigger EAGAIN
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
-	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
-		sock.Close()
-		t.Fatalf("bind: %v", err)
-	}
-
-	// Get actual port
-	sa, err := GetSockname(sock.fd)
-	if err != nil {
-		sock.Close()
-		t.Fatalf("getsockname: %v", err)
-	}
-	inet4 := sa.(*SockaddrInet4)
-	actualPort := inet4.Port()
-
-	conn := &UDPConn{UDPSocket: sock, laddr: &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(actualPort)}}
-	defer conn.Close()
-
-	// Set a very small send buffer to make EAGAIN more likely
-	_ = setSockoptInt(sock.fd, SOL_SOCKET, SO_SNDBUF, 1024)
-
-	// Set a short write deadline
-	conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
-
-	// Try to send - on non-blocking socket with small buffer, might get EAGAIN→deadline path
-	dst := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999}
-	bigBuf := make([]byte, 65000)
-	for range 100 {
-		_, _, err = conn.WriteMsgUDP(bigBuf, nil, dst)
-		if err == ErrTimedOut {
-			// Successfully exercised deadline path
-			return
-		}
-		if err != nil && err != iox.ErrWouldBlock {
-			break
-		}
-	}
-}
-
-func TestWriteMsgUDP_NoDeadline_Returns(t *testing.T) {
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
-	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
-		sock.Close()
-		t.Fatalf("bind: %v", err)
-	}
-	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
-	defer conn.Close()
-
-	// No deadline set - WriteMsgUDP should return immediately even on WouldBlock
-	n, oobn, err := conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
-	if err == nil {
-		if n != 5 {
-			t.Errorf("expected n=5, got %d", n)
-		}
-		if oobn != 0 {
-			t.Errorf("expected oobn=0, got %d", oobn)
-		}
-	}
-}
+// --- WriteMsgUDP deadline paths (trigger EAGAIN via Unix SOCK_DGRAM socketpair) ---
 
 func TestWriteMsgUDP_ExpiredDeadline(t *testing.T) {
-	sock, err := NewUDPSocket4()
-	if err != nil {
-		t.Fatalf("NewUDPSocket4: %v", err)
-	}
-	laddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
-	if err := sock.Bind(udpAddrToSockaddr4(laddr)); err != nil {
-		sock.Close()
-		t.Fatalf("bind: %v", err)
-	}
-	conn := &UDPConn{UDPSocket: sock, laddr: laddr}
-	defer conn.Close()
-
-	// Set already-expired deadline
+	conn, payload := newBlockedUDPTestConn(t)
 	conn.SetWriteDeadline(time.Now().Add(-time.Second))
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
+	if err != ErrTimedOut {
+		t.Errorf("WriteMsgUDP expired deadline: got %v, want ErrTimedOut", err)
+	}
+}
 
-	// Try to send - if first sendmsg succeeds, it bypasses deadline check
-	// If first sendmsg returns EAGAIN (unlikely on loopback), then deadline check kicks in
-	_, _, err = conn.WriteMsgUDP([]byte("hello"), nil, &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999})
-	_ = err // either success or ErrTimedOut
+func TestWriteMsgUDP_DeadlineTimeout(t *testing.T) {
+	conn, payload := newBlockedUDPTestConn(t)
+	conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
+	if err != ErrTimedOut {
+		t.Errorf("WriteMsgUDP deadline timeout: got %v, want ErrTimedOut", err)
+	}
+}
+
+func TestWriteMsgUDP_NoDeadline_WouldBlock(t *testing.T) {
+	conn, payload := newBlockedUDPTestConn(t)
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
+	if err != iox.ErrWouldBlock {
+		t.Errorf("WriteMsgUDP no deadline: got %v, want ErrWouldBlock", err)
+	}
 }
 
 // --- ListenTCP bind error with unreachable IP (exercises lines 277-280, 306-309) ---
@@ -10779,4 +10738,106 @@ func TestNetSocket_NetworkTypeUnix(t *testing.T) {
 	}
 }
 
-// NetSocketPair tests are already in coverage_test.go
+// ========== Additional Edge Case Tests ==========
+
+// Test SendMessagesAdaptive with an already expired write deadline after an
+// initial would-block result, which is the only path to the expired-before-retry
+// branch in SendMessagesAdaptive.
+func TestSendMessagesAdaptive_ExpiredBeforeRetry(t *testing.T) {
+	conn, payload := newBlockedUDPTestConn(t)
+	conn.SetWriteDeadline(time.Now().Add(-10 * time.Second))
+
+	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
+	_, err := conn.SendMessagesAdaptive(msgs)
+	if err != ErrTimedOut {
+		t.Fatalf("SendMessagesAdaptive expired-before-retry: got %v, want %v", err, ErrTimedOut)
+	}
+}
+
+// Test UnixConnPair with different network types
+func TestUnixConnPair_AllTypes(t *testing.T) {
+	for _, network := range []string{"unix", "unixgram", "unixpacket"} {
+		t.Run(network, func(t *testing.T) {
+			pair, err := UnixConnPair(network)
+			if err != nil {
+				t.Fatalf("UnixConnPair(%s): %v", network, err)
+			}
+			defer pair[0].Close()
+			defer pair[1].Close()
+
+			// Verify both ends work
+			testData := []byte("ping")
+			_, err = pair[0].Write(testData)
+			if err != nil {
+				t.Errorf("Write: %v", err)
+			}
+		})
+	}
+}
+
+// Test UnixConnPair with invalid network
+func TestUnixConnPair_BadNetwork(t *testing.T) {
+	_, err := UnixConnPair("invalid")
+	if err == nil {
+		t.Error("expected error for invalid network")
+	}
+}
+
+// Test ListenUnix with unixpacket network
+func TestListenUnix_Unixpacket_Coverage(t *testing.T) {
+	sockPath := t.TempDir() + "/test.sock"
+	ln, err := ListenUnix("unixpacket", &UnixAddr{Name: sockPath, Net: "unixpacket"})
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	defer ln.Close()
+
+	// Verify listener was created successfully
+	addr := ln.Addr()
+	if addr == nil {
+		t.Error("expected non-nil address")
+	}
+}
+
+// Test DialUnix with invalid network
+func TestDialUnix_InvalidNetwork_Coverage(t *testing.T) {
+	_, err := DialUnix("invalid", nil, &UnixAddr{Name: "/tmp/nonexistent.sock", Net: "unix"})
+	if err == nil {
+		t.Error("expected error for invalid network")
+	}
+}
+
+// Test TCP/UDP/SCTP socket creation methods
+func TestSocketCreation_Methods(t *testing.T) {
+	t.Run("TCP4", func(t *testing.T) {
+		sock, err := NewTCPSocket4()
+		if err != nil {
+			t.Fatalf("NewTCPSocket4: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("TCP6", func(t *testing.T) {
+		sock, err := NewTCPSocket6()
+		if err != nil {
+			t.Fatalf("NewTCPSocket6: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("UDP4", func(t *testing.T) {
+		sock, err := NewUDPSocket4()
+		if err != nil {
+			t.Fatalf("NewUDPSocket4: %v", err)
+		}
+		sock.Close()
+	})
+
+	t.Run("UDP6", func(t *testing.T) {
+		sock, err := NewUDPSocket6()
+		if err != nil {
+			t.Fatalf("NewUDPSocket6: %v", err)
+		}
+		sock.Close()
+	})
+}

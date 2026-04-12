@@ -8,6 +8,7 @@ package sock
 
 import (
 	"testing"
+	"unsafe"
 
 	"code.hybscloud.com/zcall"
 )
@@ -26,6 +27,12 @@ func skipIfNoSCTP(t *testing.T) *SCTPSocket {
 		t.Fatalf("NewSCTPSocket4: %v", err)
 	}
 	return sock
+}
+
+func TestSCTPAssocValueStruct(t *testing.T) {
+	if got := unsafe.Sizeof(sctpAssocValue{}); got != 8 {
+		t.Fatalf("unsafe.Sizeof(sctpAssocValue{}) = %d, want 8", got)
+	}
 }
 
 func TestSCTPNodelay(t *testing.T) {
@@ -225,32 +232,19 @@ func TestSCTPContext(t *testing.T) {
 	sock := skipIfNoSCTP(t)
 	defer sock.Close()
 
-	// Note: SCTP_CONTEXT requires an sctp_assoc_value structure with association ID.
-	// On an unconnected socket, setting context may fail with EINVAL.
-	// We test what's possible at the socket level.
+	const want uint32 = 12345
 
-	// Try to get the default context
+	err := SetSCTPContext(sock.fd, want)
+	if err != nil {
+		t.Fatalf("SetSCTPContext: %v", err)
+	}
+
 	ctx, err := GetSCTPContext(sock.fd)
-	if err != nil {
-		// This is expected on some kernel versions for unconnected sockets
-		t.Logf("GetSCTPContext on unconnected socket: %v (expected on some systems)", err)
-		return
-	}
-	t.Logf("default SCTP_CONTEXT: %d", ctx)
-
-	// Try to set context - may fail on unconnected sockets
-	err = SetSCTPContext(sock.fd, 12345)
-	if err != nil {
-		t.Logf("SetSCTPContext on unconnected socket: %v (expected on some systems)", err)
-		return
-	}
-
-	ctx, err = GetSCTPContext(sock.fd)
 	if err != nil {
 		t.Fatalf("GetSCTPContext: %v", err)
 	}
-	if ctx != 12345 {
-		t.Errorf("expected SCTP_CONTEXT=12345, got %d", ctx)
+	if ctx != want {
+		t.Errorf("expected SCTP_CONTEXT=%d, got %d", want, ctx)
 	}
 }
 
@@ -479,6 +473,80 @@ func TestSCTPConstants(t *testing.T) {
 				t.Errorf("%s = %d, want %d", tt.name, tt.got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSCTPContext_ClosedFd(t *testing.T) {
+	sock := skipIfNoSCTP(t)
+	fd := sock.fd
+	sock.Close()
+
+	err := SetSCTPContext(fd, 42)
+	if err != ErrClosed {
+		t.Errorf("SetSCTPContext on closed fd: got %v, want ErrClosed", err)
+	}
+
+	_, err = GetSCTPContext(fd)
+	if err != ErrClosed {
+		t.Errorf("GetSCTPContext on closed fd: got %v, want ErrClosed", err)
+	}
+}
+
+func TestSCTPContext_SyscallError(t *testing.T) {
+	// Use a TCP socket (not SCTP) so the SCTP-level setsockopt/getsockopt
+	// returns ENOPROTOOPT, exercising the errno != 0 branches.
+	sock, err := NewTCPSocket4()
+	if err != nil {
+		t.Fatalf("NewTCPSocket4: %v", err)
+	}
+	defer sock.Close()
+
+	if err := SetSCTPContext(sock.fd, 1); err == nil {
+		t.Error("SetSCTPContext on TCP socket: expected error")
+	}
+	if _, err := GetSCTPContext(sock.fd); err == nil {
+		t.Error("GetSCTPContext on TCP socket: expected error")
+	}
+}
+
+func TestSCTPInitMsg_GetError(t *testing.T) {
+	sock := skipIfNoSCTP(t)
+	fd := sock.fd
+	sock.Close()
+
+	_, err := GetSCTPInitMsg(fd)
+	if err == nil {
+		t.Error("GetSCTPInitMsg on closed fd: expected error")
+	}
+}
+
+func TestSCTPContext_ZeroAndMaxValue(t *testing.T) {
+	sock := skipIfNoSCTP(t)
+	defer sock.Close()
+
+	// zero value
+	if err := SetSCTPContext(sock.fd, 0); err != nil {
+		t.Fatalf("SetSCTPContext(0): %v", err)
+	}
+	v, err := GetSCTPContext(sock.fd)
+	if err != nil {
+		t.Fatalf("GetSCTPContext: %v", err)
+	}
+	if v != 0 {
+		t.Errorf("expected 0, got %d", v)
+	}
+
+	// max uint32
+	const maxVal = ^uint32(0)
+	if err := SetSCTPContext(sock.fd, maxVal); err != nil {
+		t.Fatalf("SetSCTPContext(max): %v", err)
+	}
+	v, err = GetSCTPContext(sock.fd)
+	if err != nil {
+		t.Fatalf("GetSCTPContext: %v", err)
+	}
+	if v != maxVal {
+		t.Errorf("expected %d, got %d", maxVal, v)
 	}
 }
 

@@ -76,6 +76,9 @@ func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
 }
 
 func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
+	if addr == nil {
+		return 0, ErrInvalidParam
+	}
 	raw := s.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
@@ -194,9 +197,8 @@ func ListenUDP4(laddr *UDPAddr) (*UDPConn, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet4, ok := sa.(*SockaddrInet4); ok {
-			addr := inet4.Addr()
-			actualLaddr = &UDPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+		if addr := SockaddrToUDPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr}, nil
@@ -219,9 +221,8 @@ func ListenUDP6(laddr *UDPAddr) (*UDPConn, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet6, ok := sa.(*SockaddrInet6); ok {
-			addr := inet6.Addr()
-			actualLaddr = &UDPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port()), Zone: scopeIDToZone(inet6.ScopeID())}
+		if addr := SockaddrToUDPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &UDPConn{UDPSocket: sock, laddr: actualLaddr}, nil
@@ -262,9 +263,8 @@ func DialUDP4(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet4, ok := sa.(*SockaddrInet4); ok {
-				addr := inet4.Addr()
-				actualLaddr = &UDPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+			if addr := SockaddrToUDPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -294,9 +294,8 @@ func DialUDP6(laddr, raddr *UDPAddr) (*UDPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet6, ok := sa.(*SockaddrInet6); ok {
-				addr := inet6.Addr()
-				actualLaddr = &UDPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port())}
+			if addr := SockaddrToUDPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}

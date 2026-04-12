@@ -188,6 +188,18 @@ func TestSockaddrUnix_AbstractNamespace(t *testing.T) {
 	if sa.Path() != "@abstract" {
 		t.Errorf("Expected path @abstract, got %s", sa.Path())
 	}
+
+	ptr, length := sa.Raw()
+	raw := (*RawSockaddrUnix)(ptr)
+	if raw.Path[0] != 0 {
+		t.Fatal("expected abstract sockaddr to encode a leading NUL byte")
+	}
+	if got := string(raw.Path[1:len("@abstract")]); got != "abstract" {
+		t.Fatalf("expected encoded abstract name %q, got %q", "abstract", got)
+	}
+	if want := uint32(2 + len("@abstract")); length != want {
+		t.Fatalf("expected abstract sockaddr length %d, got %d", want, length)
+	}
 }
 
 func TestTCPAddrToSockaddr(t *testing.T) {
@@ -375,7 +387,7 @@ func TestDecodeSockaddr(t *testing.T) {
 		if !ok {
 			t.Fatalf("Expected *SockaddrUnix, got %T", sa)
 		}
-		expected := "\x00abstract-test"
+		expected := "@abstract-test"
 		if unixSa.Path() != expected {
 			t.Errorf("Expected %q, got %q", expected, unixSa.Path())
 		}
@@ -1180,7 +1192,7 @@ func TestDecodeUDPAddr(t *testing.T) {
 
 func TestDecodeUnixAddr(t *testing.T) {
 	t.Run("Nil", func(t *testing.T) {
-		addr := decodeUnixAddr(nil, 0)
+		addr := decodeUnixAddr(nil, 0, "unix")
 		if addr != nil {
 			t.Error("Expected nil for nil input")
 		}
@@ -1190,7 +1202,7 @@ func TestDecodeUnixAddr(t *testing.T) {
 		raw := &RawSockaddrAny{}
 		raw.Addr.Family = AF_INET
 
-		addr := decodeUnixAddr(raw, SizeofSockaddrAny)
+		addr := decodeUnixAddr(raw, SizeofSockaddrAny, "unix")
 		if addr != nil {
 			t.Error("Expected nil for wrong family")
 		}
@@ -1205,12 +1217,15 @@ func TestDecodeUnixAddr(t *testing.T) {
 		// addrlen = 2 (family) + len(path) + 1 (NUL)
 		addrlen := uint32(2 + len(path) + 1)
 
-		addr := decodeUnixAddr(raw, addrlen)
+		addr := decodeUnixAddr(raw, addrlen, "unixpacket")
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
 		if addr.Name != "/tmp/test.sock" {
 			t.Errorf("Expected '/tmp/test.sock', got %s", addr.Name)
+		}
+		if addr.Net != "unixpacket" {
+			t.Errorf("Expected Net %q, got %q", "unixpacket", addr.Net)
 		}
 	})
 
@@ -1225,7 +1240,7 @@ func TestDecodeUnixAddr(t *testing.T) {
 		// addrlen = 2 (family) + len(path)
 		addrlen := uint32(2 + len(rawUnix.Path))
 
-		addr := decodeUnixAddr(raw, addrlen)
+		addr := decodeUnixAddr(raw, addrlen, "unix")
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
@@ -1241,12 +1256,11 @@ func TestDecodeUnixAddr(t *testing.T) {
 		// addrlen = 2 (family) + 1 (NUL) + len("abstract-name")
 		addrlen := uint32(2 + 1 + len("abstract-name"))
 
-		addr := decodeUnixAddr(raw, addrlen)
+		addr := decodeUnixAddr(raw, addrlen, "unix")
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
-		// Abstract socket name includes leading NUL
-		expected := "\x00abstract-name"
+		expected := "@abstract-name"
 		if addr.Name != expected {
 			t.Errorf("Expected %q, got %q", expected, addr.Name)
 		}
@@ -1258,7 +1272,7 @@ func TestDecodeUnixAddr(t *testing.T) {
 		// addrlen = 2 (family only, no path)
 		addrlen := uint32(2)
 
-		addr := decodeUnixAddr(raw, addrlen)
+		addr := decodeUnixAddr(raw, addrlen, "unix")
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
@@ -1271,7 +1285,7 @@ func TestDecodeUnixAddr(t *testing.T) {
 		raw := &RawSockaddrAny{}
 		raw.Addr.Family = AF_UNIX
 
-		addr := decodeUnixAddr(raw, 0)
+		addr := decodeUnixAddr(raw, 0, "unix")
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
@@ -1946,6 +1960,51 @@ func TestSockaddrToUDPAddr(t *testing.T) {
 	t.Run("WrongType", func(t *testing.T) {
 		sa := NewSockaddrUnix("/tmp/test.sock")
 		addr := SockaddrToUDPAddr(sa)
+		if addr != nil {
+			t.Error("Expected nil for Unix sockaddr")
+		}
+	})
+}
+
+func TestSockaddrToSCTPAddr(t *testing.T) {
+	t.Run("Nil", func(t *testing.T) {
+		addr := sockaddrToSCTPAddr(nil)
+		if addr != nil {
+			t.Error("Expected nil for nil sockaddr")
+		}
+	})
+
+	t.Run("IPv4", func(t *testing.T) {
+		sa := NewSockaddrInet4([4]byte{192, 168, 1, 1}, 5000)
+		addr := sockaddrToSCTPAddr(sa)
+		if addr == nil {
+			t.Fatal("Expected non-nil addr")
+		}
+		if addr.Port != 5000 {
+			t.Errorf("Expected port 5000, got %d", addr.Port)
+		}
+		if !addr.IP.Equal(net.IPv4(192, 168, 1, 1)) {
+			t.Errorf("Expected 192.168.1.1, got %v", addr.IP)
+		}
+	})
+
+	t.Run("IPv6", func(t *testing.T) {
+		sa := NewSockaddrInet6([16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, 5000, 2)
+		addr := sockaddrToSCTPAddr(sa)
+		if addr == nil {
+			t.Fatal("Expected non-nil addr")
+		}
+		if addr.Port != 5000 {
+			t.Errorf("Expected port 5000, got %d", addr.Port)
+		}
+		if want := scopeIDToZone(2); addr.Zone != want {
+			t.Errorf("Expected zone %q, got %s", want, addr.Zone)
+		}
+	})
+
+	t.Run("WrongType", func(t *testing.T) {
+		sa := NewSockaddrUnix("/tmp/test.sock")
+		addr := sockaddrToSCTPAddr(sa)
 		if addr != nil {
 			t.Error("Expected nil for Unix sockaddr")
 		}
@@ -2644,6 +2703,31 @@ func TestSCTPConn_Methods(t *testing.T) {
 	}
 }
 
+func TestSCTPConn_ReadPreservesEmptySeqpacketMessage(t *testing.T) {
+	pair, err := UnixConnPair("unixpacket")
+	if err != nil {
+		t.Fatalf("UnixConnPair(unixpacket): %v", err)
+	}
+	conn := &SCTPConn{
+		SCTPSocket: &SCTPSocket{NetSocket: pair[0].NetSocket},
+	}
+	defer conn.Close()
+	defer pair[1].Close()
+
+	if _, errno := zcall.Sendto(uintptr(pair[1].fd.Raw()), nil, 0, nil, 0); errno != 0 {
+		t.Fatalf("Sendto(empty): errno=%v", errno)
+	}
+
+	buf := make([]byte, 1)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read(empty seqpacket): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("Read(empty seqpacket) n=%d, want 0", n)
+	}
+}
+
 func TestSCTPListener_AcceptSocket(t *testing.T) {
 	laddr := &SCTPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
 	listener, err := ListenSCTP4(laddr)
@@ -2873,6 +2957,40 @@ func TestAdaptiveWrite_SuccessWithDeadline(t *testing.T) {
 	}
 }
 
+func TestAdaptiveWrite_RetriesInterrupted(t *testing.T) {
+	var ds deadlineState
+	ds.setWriteDeadline(time.Now().Add(5 * time.Second))
+
+	callCount := 0
+	writeFn := func() (int, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return 0, ErrInterrupted
+		case 2:
+			return 0, iox.ErrWouldBlock
+		case 3:
+			return 0, ErrInterrupted
+		case 4:
+			return 10, nil
+		default:
+			t.Fatalf("unexpected extra call %d", callCount)
+			return 0, nil
+		}
+	}
+
+	n, err := adaptiveWrite(writeFn, &ds)
+	if err != nil {
+		t.Errorf("Expected nil error, got %v", err)
+	}
+	if n != 10 {
+		t.Errorf("Expected n=10, got %d", n)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 calls, got %d", callCount)
+	}
+}
+
 func TestAdaptiveWrite_TimeoutWithDeadline(t *testing.T) {
 	var ds deadlineState
 	ds.setWriteDeadline(time.Now().Add(50 * time.Millisecond))
@@ -2943,6 +3061,40 @@ func TestAdaptiveRead_SuccessWithDeadline(t *testing.T) {
 	}
 	if callCount < 3 {
 		t.Errorf("Expected at least 3 calls, got %d", callCount)
+	}
+}
+
+func TestAdaptiveRead_RetriesInterrupted(t *testing.T) {
+	var ds deadlineState
+	ds.setReadDeadline(time.Now().Add(5 * time.Second))
+
+	callCount := 0
+	readFn := func() (int, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return 0, ErrInterrupted
+		case 2:
+			return 0, iox.ErrWouldBlock
+		case 3:
+			return 0, ErrInterrupted
+		case 4:
+			return 100, nil
+		default:
+			t.Fatalf("unexpected extra call %d", callCount)
+			return 0, nil
+		}
+	}
+
+	n, err := adaptiveRead(readFn, &ds)
+	if err != nil {
+		t.Errorf("Expected nil error, got %v", err)
+	}
+	if n != 100 {
+		t.Errorf("Expected n=100, got %d", n)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 calls, got %d", callCount)
 	}
 }
 
