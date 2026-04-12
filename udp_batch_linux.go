@@ -9,7 +9,6 @@ package sock
 import (
 	"unsafe"
 
-	"code.hybscloud.com/iox"
 	"code.hybscloud.com/zcall"
 )
 
@@ -190,69 +189,15 @@ func encodeSockaddr(addr *UDPAddr, raw *RawSockaddrAny) {
 // SendMessagesAdaptive sends multiple UDP messages with deadline support.
 // If a write deadline is set, retries with backoff until success or timeout.
 func (c *UDPConn) SendMessagesAdaptive(msgs []UDPMessage) (int, error) {
-	n, err := c.SendMessages(msgs)
-	if err != iox.ErrWouldBlock {
-		return n, err
-	}
-
-	// No deadline set: return immediately (non-blocking contract)
-	if !c.deadline.hasWriteDeadline() {
-		return n, err
-	}
-
-	// Check if already expired
-	if c.deadline.writeExpired() {
-		return 0, ErrTimedOut
-	}
-
-	// Adapt: retry with backoff until deadline
-	var backoff netBackoff
-	for {
-		backoff.wait()
-
-		n, err = c.SendMessages(msgs)
-		if err != iox.ErrWouldBlock {
-			backoff.done()
-			return n, err
-		}
-
-		if c.deadline.writeExpired() {
-			return 0, ErrTimedOut
-		}
-	}
+	return adaptiveWrite(func() (int, error) {
+		return c.SendMessages(msgs)
+	}, &c.deadline)
 }
 
 // RecvMessagesAdaptive receives multiple UDP messages with deadline support.
 // If a read deadline is set, retries with backoff until success or timeout.
 func (c *UDPConn) RecvMessagesAdaptive(msgs []UDPMessage) (int, error) {
-	n, err := c.RecvMessages(msgs)
-	if err != iox.ErrWouldBlock {
-		return n, err
-	}
-
-	// No deadline set: return immediately (non-blocking contract)
-	if !c.deadline.hasReadDeadline() {
-		return n, err
-	}
-
-	// Check if already expired
-	if c.deadline.readExpired() {
-		return 0, ErrTimedOut
-	}
-
-	// Adapt: retry with backoff until deadline
-	var backoff netBackoff
-	for {
-		backoff.wait()
-
-		n, err = c.RecvMessages(msgs)
-		if err != iox.ErrWouldBlock {
-			backoff.done()
-			return n, err
-		}
-
-		if c.deadline.readExpired() {
-			return 0, ErrTimedOut
-		}
-	}
+	return adaptiveRead(func() (int, error) {
+		return c.RecvMessages(msgs)
+	}, &c.deadline)
 }

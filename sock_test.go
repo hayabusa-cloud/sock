@@ -2991,6 +2991,40 @@ func TestAdaptiveWrite_RetriesInterrupted(t *testing.T) {
 	}
 }
 
+func TestAdaptiveWriteMsg_RetriesInterrupted(t *testing.T) {
+	var ds deadlineState
+	ds.setWriteDeadline(time.Now().Add(5 * time.Second))
+
+	callCount := 0
+	writeFn := func() (int, int, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return 0, 0, ErrInterrupted
+		case 2:
+			return 0, 0, iox.ErrWouldBlock
+		case 3:
+			return 0, 0, ErrInterrupted
+		case 4:
+			return 10, 4, nil
+		default:
+			t.Fatalf("unexpected extra call %d", callCount)
+			return 0, 0, nil
+		}
+	}
+
+	n, oobn, err := adaptiveWriteMsg(writeFn, &ds)
+	if err != nil {
+		t.Errorf("Expected nil error, got %v", err)
+	}
+	if n != 10 || oobn != 4 {
+		t.Errorf("Expected n=10 and oobn=4, got %d and %d", n, oobn)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 calls, got %d", callCount)
+	}
+}
+
 func TestAdaptiveWrite_TimeoutWithDeadline(t *testing.T) {
 	var ds deadlineState
 	ds.setWriteDeadline(time.Now().Add(50 * time.Millisecond))
@@ -3098,6 +3132,44 @@ func TestAdaptiveRead_RetriesInterrupted(t *testing.T) {
 	}
 }
 
+func TestAdaptiveReadMsg_RetriesInterrupted(t *testing.T) {
+	var ds deadlineState
+	ds.setReadDeadline(time.Now().Add(5 * time.Second))
+
+	wantAddr := &UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}
+	callCount := 0
+	readFn := func() (int, int, int, *UDPAddr, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return 0, 0, 0, nil, ErrInterrupted
+		case 2:
+			return 0, 0, 0, nil, iox.ErrWouldBlock
+		case 3:
+			return 0, 0, 0, nil, ErrInterrupted
+		case 4:
+			return 100, 12, 7, wantAddr, nil
+		default:
+			t.Fatalf("unexpected extra call %d", callCount)
+			return 0, 0, 0, nil, nil
+		}
+	}
+
+	n, oobn, flags, addr, err := adaptiveReadMsg(readFn, &ds)
+	if err != nil {
+		t.Errorf("Expected nil error, got %v", err)
+	}
+	if n != 100 || oobn != 12 || flags != 7 {
+		t.Errorf("Expected n=100, oobn=12, flags=7; got %d, %d, %d", n, oobn, flags)
+	}
+	if addr != wantAddr {
+		t.Errorf("Expected addr=%p, got %p", wantAddr, addr)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 calls, got %d", callCount)
+	}
+}
+
 // AdaptiveAccept tests
 
 func TestAdaptiveAccept_ImmediateSuccess(t *testing.T) {
@@ -3160,6 +3232,38 @@ func TestAdaptiveAccept_SuccessWithDeadline(t *testing.T) {
 	}
 	if result != 99 {
 		t.Errorf("Expected result=99, got %d", result)
+	}
+}
+
+func TestAdaptiveAccept_RetriesInterrupted(t *testing.T) {
+	callCount := 0
+	acceptFn := func() (int, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			return 0, ErrInterrupted
+		case 2:
+			return 0, iox.ErrWouldBlock
+		case 3:
+			return 0, ErrInterrupted
+		case 4:
+			return 77, nil
+		default:
+			t.Fatalf("unexpected extra call %d", callCount)
+			return 0, nil
+		}
+	}
+
+	deadlineNs := time.Now().Add(5 * time.Second).UnixNano()
+	result, err := adaptiveAccept(acceptFn, deadlineNs)
+	if err != nil {
+		t.Errorf("Expected nil error, got %v", err)
+	}
+	if result != 77 {
+		t.Errorf("Expected result=77, got %d", result)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 calls, got %d", callCount)
 	}
 }
 
