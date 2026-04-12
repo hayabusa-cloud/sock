@@ -14,6 +14,7 @@ import (
 	"time"
 	"unsafe"
 
+	"code.hybscloud.com/iox"
 	"code.hybscloud.com/zcall"
 )
 
@@ -63,6 +64,19 @@ func (s *UnixSocket) Protocol() UnderlyingProtocol {
 	}
 }
 
+func unixSocketNetwork(typ int) string {
+	switch typ & 0xF {
+	case SOCK_STREAM:
+		return "unix"
+	case SOCK_DGRAM:
+		return "unixgram"
+	case SOCK_SEQPACKET:
+		return "unixpacket"
+	default:
+		return "unix"
+	}
+}
+
 // UnixAddr represents a Unix domain socket address.
 type UnixAddr = net.UnixAddr
 
@@ -109,14 +123,14 @@ func (c *UnixConn) SetWriteDeadline(t time.Time) error {
 
 // Read reads data from the connection with adaptive I/O.
 // If no deadline is set, returns immediately with iox.ErrWouldBlock if not ready.
-// For stream sockets (SOCK_STREAM, SOCK_SEQPACKET), returns io.EOF on connection close.
-// For datagram sockets (SOCK_DGRAM), (0, nil) indicates an empty datagram.
+// For stream sockets (SOCK_STREAM), returns io.EOF on connection close.
+// For datagram and seqpacket sockets, (0, nil) indicates an empty message.
 func (c *UnixConn) Read(p []byte) (int, error) {
 	n, err := adaptiveRead(func() (int, error) {
 		return c.fd.Read(p)
 	}, &c.deadline)
 	// Convert (0, nil) to (0, io.EOF) for stream protocols
-	if n == 0 && err == nil && c.Protocol() != UnderlyingProtocolDgram {
+	if n == 0 && err == nil && c.Protocol() == UnderlyingProtocolStream {
 		return 0, io.EOF
 	}
 	return n, err
@@ -154,7 +168,7 @@ func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
 		if errno != 0 {
 			return int(rn), errFromErrno(errno)
 		}
-		addr = decodeUnixAddr(&rsa, rsaLen)
+		addr = decodeUnixAddr(&rsa, rsaLen, unixSocketNetwork(c.typ))
 		return int(rn), nil
 	}, &c.deadline)
 
@@ -172,6 +186,9 @@ func (c *UnixConn) WriteTo(buf []byte, addr Addr) (int, error) {
 		raw := c.fd.Raw()
 		if raw < 0 {
 			return 0, ErrClosed
+		}
+		if unixAddr.Net != unixSocketNetwork(c.typ) {
+			return 0, ErrAddressFamilyNotSupported
 		}
 		sa := unixAddrToSockaddr(unixAddr)
 		ptr, length := sa.Raw()
@@ -222,7 +239,7 @@ func (l *UnixListener) Accept() (*UnixConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		raddr := decodeUnixAddr(rawAddr, addrlen)
+		raddr := decodeUnixAddr(rawAddr, addrlen, unixSocketNetwork(sock.typ))
 		conn := &UnixConn{
 			UnixSocket: &UnixSocket{NetSocket: sock},
 			laddr:      l.laddr,
@@ -247,7 +264,7 @@ func (l *UnixListener) AcceptSocket() (Socket, error) {
 func (l *UnixListener) Addr() Addr { return l.laddr }
 
 // ListenUnix creates a Unix domain socket listener.
-// network must be "unix", "unixgram", or "unixpacket".
+// network must be "unix" or "unixpacket". Use ListenUnixgram for "unixgram".
 func ListenUnix(network string, laddr *UnixAddr) (*UnixListener, error) {
 	if laddr == nil {
 		return nil, ErrInvalidParam
@@ -257,8 +274,6 @@ func ListenUnix(network string, laddr *UnixAddr) (*UnixListener, error) {
 	switch network {
 	case "unix":
 		sock, err = NewUnixStreamSocket()
-	case "unixgram":
-		sock, err = NewUnixDatagramSocket()
 	case "unixpacket":
 		sock, err = NewUnixSeqpacketSocket()
 	default:
@@ -278,7 +293,15 @@ func ListenUnix(network string, laddr *UnixAddr) (*UnixListener, error) {
 			return nil, err
 		}
 	}
-	return &UnixListener{UnixSocket: sock, laddr: laddr}, nil
+	actualLaddr := laddr
+	if laddr.Name == "" {
+		if sa, err := GetSockname(sock.fd); err == nil {
+			if unixSa := SockaddrToUnixAddr(sa, network); unixSa != nil {
+				actualLaddr = unixSa
+			}
+		}
+	}
+	return &UnixListener{UnixSocket: sock, laddr: actualLaddr}, nil
 }
 
 // ListenUnixgram creates a Unix datagram socket bound to laddr.
@@ -298,14 +321,23 @@ func ListenUnixgram(network string, laddr *UnixAddr) (*UnixConn, error) {
 		sock.Close()
 		return nil, err
 	}
-	return &UnixConn{UnixSocket: sock, laddr: laddr, raddr: nil}, nil
+	actualLaddr := laddr
+	if laddr.Name == "" {
+		if sa, err := GetSockname(sock.fd); err == nil {
+			if unixSa := SockaddrToUnixAddr(sa, network); unixSa != nil {
+				actualLaddr = unixSa
+			}
+		}
+	}
+	return &UnixConn{UnixSocket: sock, laddr: actualLaddr, raddr: nil}, nil
 }
 
 // DialUnix initiates a non-blocking connection to a Unix domain socket.
 //
 // Unlike blocking dialers, this function returns immediately once the connection
 // attempt starts. The handshake may still be in progress when this function
-// returns (ErrInProgress is silently ignored).
+// returns (ErrInProgress is silently ignored; Linux AF_UNIX may surface the
+// same pending state as iox.ErrWouldBlock / EAGAIN).
 //
 // network must be "unix", "unixgram", or "unixpacket".
 func DialUnix(network string, laddr, raddr *UnixAddr) (*UnixConn, error) {
@@ -335,11 +367,19 @@ func DialUnix(network string, laddr, raddr *UnixAddr) (*UnixConn, error) {
 		}
 	}
 	sa := unixAddrToSockaddr(raddr)
-	if err := sock.Connect(sa); err != nil && err != ErrInProgress {
+	if err := sock.Connect(sa); err != nil && err != ErrInProgress && err != iox.ErrWouldBlock {
 		sock.Close()
 		return nil, err
 	}
-	return &UnixConn{UnixSocket: sock, laddr: laddr, raddr: raddr}, nil
+	actualLaddr := laddr
+	if laddr != nil && laddr.Name == "" {
+		if sa, err := GetSockname(sock.fd); err == nil {
+			if unixSa := SockaddrToUnixAddr(sa, network); unixSa != nil {
+				actualLaddr = unixSa
+			}
+		}
+	}
+	return &UnixConn{UnixSocket: sock, laddr: actualLaddr, raddr: raddr}, nil
 }
 
 // UnixConnPair creates a pair of connected Unix domain sockets.
@@ -372,38 +412,12 @@ func unixAddrToSockaddr(addr *UnixAddr) *SockaddrUnix {
 	return NewSockaddrUnix(addr.Name)
 }
 
-func decodeUnixAddr(raw *RawSockaddrAny, addrlen uint32) *UnixAddr {
+func decodeUnixAddr(raw *RawSockaddrAny, addrlen uint32, network string) *UnixAddr {
 	if raw == nil || raw.Addr.Family != AF_UNIX {
 		return nil
 	}
 	su := (*RawSockaddrUnix)(unsafe.Pointer(raw))
-
-	// Calculate path length from kernel-provided addrlen
-	// addrlen = 2 (header) + path_bytes
-	// Header: sa_family_t (2 bytes) on Linux, sa_len+sa_family (1+1) on BSD
-	if addrlen < 2 {
-		return &UnixAddr{Name: "", Net: "unix"}
-	}
-	pathLen := int(addrlen) - 2
-	if pathLen <= 0 {
-		return &UnixAddr{Name: "", Net: "unix"}
-	}
-	if pathLen > len(su.Path) {
-		pathLen = len(su.Path)
-	}
-
-	// Abstract socket: starts with NUL byte, use full length from kernel
-	if su.Path[0] == 0 && pathLen > 1 {
-		return &UnixAddr{Name: string(su.Path[:pathLen]), Net: "unix"}
-	}
-
-	// Pathname socket: stop at NUL terminator
-	for i := range pathLen {
-		if su.Path[i] == 0 {
-			return &UnixAddr{Name: string(su.Path[:i]), Net: "unix"}
-		}
-	}
-	return &UnixAddr{Name: string(su.Path[:pathLen]), Net: "unix"}
+	return &UnixAddr{Name: unixSockaddrPath(su, addrlen), Net: network}
 }
 
 // Compile-time interface assertions
