@@ -164,12 +164,13 @@ func (c *SCTPConn) SetWriteDeadline(t time.Time) error {
 // Read reads data from the connection with adaptive I/O.
 // If no deadline is set, returns immediately with iox.ErrWouldBlock if not ready.
 // If a deadline is set, retries with backoff until success or deadline exceeded.
-// Returns io.EOF when the connection is closed.
+// For stream-mode sockets, returns io.EOF on connection close.
+// For seqpacket-mode sockets, (0, nil) indicates an empty message.
 func (c *SCTPConn) Read(p []byte) (int, error) {
 	n, err := adaptiveRead(func() (int, error) {
 		return c.fd.Read(p)
 	}, &c.deadline)
-	if n == 0 && err == nil {
+	if n == 0 && err == nil && c.Protocol() == UnderlyingProtocolStream {
 		return 0, io.EOF // Connection closed
 	}
 	return n, err
@@ -287,9 +288,8 @@ func (d *SCTPDialer) Dial4(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet4, ok := sa.(*SockaddrInet4); ok {
-				addr := inet4.Addr()
-				actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+			if addr := sockaddrToSCTPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -323,9 +323,8 @@ func (d *SCTPDialer) Dial6(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet6, ok := sa.(*SockaddrInet6); ok {
-				addr := inet6.Addr()
-				actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port())}
+			if addr := sockaddrToSCTPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -368,9 +367,8 @@ func ListenSCTP4(laddr *SCTPAddr) (*SCTPListener, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet4, ok := sa.(*SockaddrInet4); ok {
-			addr := inet4.Addr()
-			actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+		if addr := sockaddrToSCTPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &SCTPListener{SCTPSocket: sock, laddr: actualLaddr}, nil
@@ -398,9 +396,8 @@ func ListenSCTP6(laddr *SCTPAddr) (*SCTPListener, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet6, ok := sa.(*SockaddrInet6); ok {
-			addr := inet6.Addr()
-			actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port()), Zone: scopeIDToZone(inet6.ScopeID())}
+		if addr := sockaddrToSCTPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &SCTPListener{SCTPSocket: sock, laddr: actualLaddr}, nil
@@ -448,9 +445,8 @@ func DialSCTP4(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet4, ok := sa.(*SockaddrInet4); ok {
-				addr := inet4.Addr()
-				actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+			if addr := sockaddrToSCTPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -487,9 +483,8 @@ func DialSCTP6(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet6, ok := sa.(*SockaddrInet6); ok {
-				addr := inet6.Addr()
-				actualLaddr = &SCTPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port())}
+			if addr := sockaddrToSCTPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -534,6 +529,19 @@ func sctpAddrToSockaddr6(addr *SCTPAddr) *SockaddrInet6 {
 		}
 	}
 	return NewSockaddrInet6(ip, uint16(addr.Port), zoneToScopeID(addr.Zone))
+}
+
+func sockaddrToSCTPAddr(sa Sockaddr) *SCTPAddr {
+	if sa == nil {
+		return nil
+	}
+	switch s := sa.(type) {
+	case *SockaddrInet4:
+		return &SCTPAddr{IP: net.IP(s.raw.Addr[:]), Port: int(ntohs(s.raw.Port))}
+	case *SockaddrInet6:
+		return &SCTPAddr{IP: net.IP(s.raw.Addr[:]), Port: int(ntohs(s.raw.Port)), Zone: scopeIDToZone(s.raw.ScopeID)}
+	}
+	return nil
 }
 
 func decodeSCTPAddr(raw *RawSockaddrAny) *SCTPAddr {

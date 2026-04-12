@@ -207,9 +207,8 @@ func (d *TCPDialer) Dial4(laddr, raddr *TCPAddr) (*TCPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet4, ok := sa.(*SockaddrInet4); ok {
-				addr := inet4.Addr()
-				actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+			if addr := SockaddrToTCPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -242,9 +241,8 @@ func (d *TCPDialer) Dial6(laddr, raddr *TCPAddr) (*TCPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet6, ok := sa.(*SockaddrInet6); ok {
-				addr := inet6.Addr()
-				actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port())}
+			if addr := SockaddrToTCPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -285,9 +283,8 @@ func ListenTCP4(laddr *TCPAddr) (*TCPListener, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet4, ok := sa.(*SockaddrInet4); ok {
-			addr := inet4.Addr()
-			actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+		if addr := SockaddrToTCPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &TCPListener{TCPSocket: sock, laddr: actualLaddr}, nil
@@ -314,9 +311,8 @@ func ListenTCP6(laddr *TCPAddr) (*TCPListener, error) {
 	// Query actual bound address (handles port 0 → ephemeral port)
 	actualLaddr := laddr
 	if sa, err := GetSockname(sock.fd); err == nil {
-		if inet6, ok := sa.(*SockaddrInet6); ok {
-			addr := inet6.Addr()
-			actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port()), Zone: scopeIDToZone(inet6.ScopeID())}
+		if addr := SockaddrToTCPAddr(sa); addr != nil {
+			actualLaddr = addr
 		}
 	}
 	return &TCPListener{TCPSocket: sock, laddr: actualLaddr}, nil
@@ -365,9 +361,8 @@ func DialTCP4(laddr, raddr *TCPAddr) (*TCPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet4, ok := sa.(*SockaddrInet4); ok {
-				addr := inet4.Addr()
-				actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet4.Port())}
+			if addr := SockaddrToTCPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
@@ -405,9 +400,8 @@ func DialTCP6(laddr, raddr *TCPAddr) (*TCPConn, error) {
 	actualLaddr := laddr
 	if actualLaddr == nil {
 		if sa, err := GetSockname(sock.fd); err == nil {
-			if inet6, ok := sa.(*SockaddrInet6); ok {
-				addr := inet6.Addr()
-				actualLaddr = &TCPAddr{IP: net.IP(addr[:]), Port: int(inet6.Port())}
+			if addr := SockaddrToTCPAddr(sa); addr != nil {
+				actualLaddr = addr
 			}
 		}
 	}
