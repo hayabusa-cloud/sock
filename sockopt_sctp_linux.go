@@ -52,6 +52,15 @@ type SCTPInitMsg struct {
 	MaxInitTimeout uint16 // Max init timeout (ms)
 }
 
+// sctpAssocValue matches Linux struct sctp_assoc_value for options such as
+// SCTP_CONTEXT that carry both an association selector and a 32-bit value.
+type sctpAssocValue struct {
+	AssocID    int32
+	AssocValue uint32
+}
+
+const sctpFutureAssoc = 0
+
 // SetSCTPNodelay enables or disables the SCTP_NODELAY socket option.
 // When enabled, disables Nagle-like algorithm for lower latency.
 func SetSCTPNodelay(fd *iofd.FD, enable bool) error {
@@ -146,13 +155,46 @@ func GetSCTPInitMsg(fd *iofd.FD) (*SCTPInitMsg, error) {
 // SetSCTPContext sets the SCTP_CONTEXT option.
 // This sets the default context value for outgoing messages.
 func SetSCTPContext(fd *iofd.FD, context uint32) error {
-	return setSockoptInt(fd, zcall.SOL_SCTP, SCTP_CONTEXT, int(context))
+	raw := fd.Raw()
+	if raw < 0 {
+		return ErrClosed
+	}
+	value := sctpAssocValue{
+		AssocID:    sctpFutureAssoc,
+		AssocValue: context,
+	}
+	errno := zcall.Setsockopt(
+		uintptr(raw),
+		uintptr(zcall.SOL_SCTP),
+		uintptr(SCTP_CONTEXT),
+		unsafe.Pointer(&value),
+		unsafe.Sizeof(value),
+	)
+	if errno != 0 {
+		return errFromErrno(errno)
+	}
+	return nil
 }
 
 // GetSCTPContext returns the current SCTP_CONTEXT setting.
 func GetSCTPContext(fd *iofd.FD) (uint32, error) {
-	v, err := getSockoptInt(fd, zcall.SOL_SCTP, SCTP_CONTEXT)
-	return uint32(v), err
+	raw := fd.Raw()
+	if raw < 0 {
+		return 0, ErrClosed
+	}
+	value := sctpAssocValue{AssocID: sctpFutureAssoc}
+	valueLen := uint32(unsafe.Sizeof(value))
+	errno := zcall.Getsockopt(
+		uintptr(raw),
+		uintptr(zcall.SOL_SCTP),
+		uintptr(SCTP_CONTEXT),
+		unsafe.Pointer(&value),
+		unsafe.Pointer(&valueLen),
+	)
+	if errno != 0 {
+		return 0, errFromErrno(errno)
+	}
+	return value.AssocValue, nil
 }
 
 // SetSCTPFragmentInterleave sets the SCTP_FRAGMENT_INTERLEAVE option.
