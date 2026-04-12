@@ -292,6 +292,10 @@ func TestDialUnix(t *testing.T) {
 }
 
 func TestDialUnixTreatsWouldBlockAsPending(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("AF_UNIX backlog-pressure ErrWouldBlock is Linux-specific")
+	}
+
 	addr := uniqAddr("dial-pending", "unix")
 
 	server, err := NewUnixStreamSocket()
