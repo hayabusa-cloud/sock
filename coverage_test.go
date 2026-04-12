@@ -9987,77 +9987,26 @@ func TestResolveSCTPAddr_BadAddress(t *testing.T) {
 // --- WriteMsgUDP deadline paths (trigger EAGAIN via Unix SOCK_DGRAM socketpair) ---
 
 func TestWriteMsgUDP_ExpiredDeadline(t *testing.T) {
-	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
-	if err != nil {
-		t.Fatalf("NetSocketPair: %v", err)
-	}
-	defer pair[0].Close()
-	defer pair[1].Close()
-
-	SetSendBuffer(pair[0].fd, 4096)
-
-	payload := make([]byte, 2048)
-	for i := 0; i < 256; i++ {
-		_, werr := pair[0].Write(payload)
-		if werr != nil {
-			break
-		}
-	}
-
-	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+	conn, payload := newBlockedUDPTestConn(t)
 	conn.SetWriteDeadline(time.Now().Add(-time.Second))
-	_, _, err = conn.WriteMsgUDP(payload, nil, nil)
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
 	if err != ErrTimedOut {
 		t.Errorf("WriteMsgUDP expired deadline: got %v, want ErrTimedOut", err)
 	}
 }
 
 func TestWriteMsgUDP_DeadlineTimeout(t *testing.T) {
-	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
-	if err != nil {
-		t.Fatalf("NetSocketPair: %v", err)
-	}
-	defer pair[0].Close()
-	defer pair[1].Close()
-
-	SetSendBuffer(pair[0].fd, 4096)
-
-	payload := make([]byte, 2048)
-	for i := 0; i < 256; i++ {
-		_, werr := pair[0].Write(payload)
-		if werr != nil {
-			break
-		}
-	}
-
-	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+	conn, payload := newBlockedUDPTestConn(t)
 	conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
-	_, _, err = conn.WriteMsgUDP(payload, nil, nil)
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
 	if err != ErrTimedOut {
 		t.Errorf("WriteMsgUDP deadline timeout: got %v, want ErrTimedOut", err)
 	}
 }
 
 func TestWriteMsgUDP_NoDeadline_WouldBlock(t *testing.T) {
-	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
-	if err != nil {
-		t.Fatalf("NetSocketPair: %v", err)
-	}
-	defer pair[0].Close()
-	defer pair[1].Close()
-
-	SetSendBuffer(pair[0].fd, 4096)
-
-	payload := make([]byte, 2048)
-	for i := 0; i < 256; i++ {
-		_, werr := pair[0].Write(payload)
-		if werr != nil {
-			break
-		}
-	}
-
-	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
-	_, _, err = conn.WriteMsgUDP(payload, nil, nil)
+	conn, payload := newBlockedUDPTestConn(t)
+	_, _, err := conn.WriteMsgUDP(payload, nil, nil)
 	if err != iox.ErrWouldBlock {
 		t.Errorf("WriteMsgUDP no deadline: got %v, want ErrWouldBlock", err)
 	}
@@ -10791,30 +10740,17 @@ func TestNetSocket_NetworkTypeUnix(t *testing.T) {
 
 // ========== Additional Edge Case Tests ==========
 
-// Test SendMessagesAdaptive with already expired write deadline
-// (exercises deadline expiry check before retry loop)
+// Test SendMessagesAdaptive with an already expired write deadline after an
+// initial would-block result, which is the only path to the expired-before-retry
+// branch in SendMessagesAdaptive.
 func TestSendMessagesAdaptive_ExpiredBeforeRetry(t *testing.T) {
-	addr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-	conn, err := ListenUDP4(addr)
-	if err != nil {
-		t.Fatalf("ListenUDP4: %v", err)
-	}
-	defer conn.Close()
-
-	// Set deadline in the past
+	conn, payload := newBlockedUDPTestConn(t)
 	conn.SetWriteDeadline(time.Now().Add(-10 * time.Second))
 
-	// Since UDP sends succeed immediately (before deadline check),
-	// this exercises the success path rather than the expired check.
-	// The expired check requires ErrWouldBlock first, which UDP rarely returns.
-	msgs := []UDPMessage{{Addr: conn.laddr, Buffers: [][]byte{[]byte("test")}}}
-	n, err := conn.SendMessagesAdaptive(msgs)
-	// UDP send succeeds before reaching deadline check
-	if err != nil && err != ErrTimedOut {
-		t.Fatalf("SendMessagesAdaptive unexpected error: %v", err)
-	}
-	if err == nil && n != 1 {
-		t.Errorf("expected 1 message sent, got %d", n)
+	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
+	_, err := conn.SendMessagesAdaptive(msgs)
+	if err != ErrTimedOut {
+		t.Fatalf("SendMessagesAdaptive expired-before-retry: got %v, want %v", err, ErrTimedOut)
 	}
 }
 

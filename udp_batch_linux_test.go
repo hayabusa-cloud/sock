@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"code.hybscloud.com/iox"
-	"code.hybscloud.com/zcall"
 )
 
 func TestSendRecvMessages(t *testing.T) {
@@ -422,62 +421,24 @@ func TestEncodeSockaddr(t *testing.T) {
 }
 
 func TestSendMessagesAdaptiveExpiredDeadline(t *testing.T) {
-	// Use Unix SOCK_DGRAM socketpair with tiny buffer to reliably trigger EAGAIN
-	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
-	if err != nil {
-		t.Fatalf("NetSocketPair: %v", err)
-	}
-	defer pair[0].Close()
-	defer pair[1].Close()
-
-	SetSendBuffer(pair[0].fd, 4096)
-
-	// Fill the send buffer to trigger EAGAIN
-	payload := make([]byte, 2048)
-	for i := 0; i < 256; i++ {
-		_, werr := pair[0].Write(payload)
-		if werr != nil {
-			break
-		}
-	}
-
-	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+	conn, payload := newBlockedUDPTestConn(t)
 
 	// Set already expired deadline, then try adaptive send
 	conn.SetWriteDeadline(time.Now().Add(-1 * time.Second))
 	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
-	_, err = conn.SendMessagesAdaptive(msgs)
+	_, err := conn.SendMessagesAdaptive(msgs)
 	if err != ErrTimedOut {
 		t.Errorf("SendMessagesAdaptive expired deadline: got %v, want ErrTimedOut", err)
 	}
 }
 
 func TestSendMessagesAdaptiveTimeout(t *testing.T) {
-	// Use Unix SOCK_DGRAM socketpair with tiny buffer to reliably trigger EAGAIN
-	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
-	if err != nil {
-		t.Fatalf("NetSocketPair: %v", err)
-	}
-	defer pair[0].Close()
-	defer pair[1].Close()
-
-	SetSendBuffer(pair[0].fd, 4096)
-
-	// Fill the send buffer to trigger EAGAIN
-	payload := make([]byte, 2048)
-	for i := 0; i < 256; i++ {
-		_, werr := pair[0].Write(payload)
-		if werr != nil {
-			break
-		}
-	}
-
-	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+	conn, payload := newBlockedUDPTestConn(t)
 
 	// Set short deadline — should enter retry loop then time out
 	conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
 	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
-	_, err = conn.SendMessagesAdaptive(msgs)
+	_, err := conn.SendMessagesAdaptive(msgs)
 	if err != ErrTimedOut {
 		t.Errorf("SendMessagesAdaptive timeout: got %v, want ErrTimedOut", err)
 	}
