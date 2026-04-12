@@ -9,6 +9,27 @@ This is `sock`, a zero-allocation socket library for Go built on:
 
 Target: Linux kernel 6.18+, Go 1.26+
 
+## iox Outcome Algebra
+
+```text
+        failure
+       /       \
+ErrWouldBlock ErrMore
+       \       /
+          nil
+```
+
+- `nil`: completion for this call
+- `ErrWouldBlock`: no progress now; wait for readiness and retry
+- `ErrMore`: progress happened; the operation stays active
+- other error: real failure
+
+Review by this algebra:
+
+- counts carry progress; errors carry control flow
+- `(n > 0, ErrMore)` and `(n > 0, ErrWouldBlock)` can be valid
+- preserve semantic sentinels across layers; do not wrap or collapse them into generic failure
+
 ## Review Focus
 
 Only report issues that are:
