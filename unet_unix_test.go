@@ -21,8 +21,8 @@ const (
 
 func TestUnixSockaddr(t *testing.T) {
 	t.Run("abstract", func(t *testing.T) {
-		// Note: "@" is stored as-is, not converted to NUL
-		// Length = family(2) + path("@"=1) + NUL(1) = 4
+		// A leading '@' is user-facing shorthand for an abstract socket name.
+		// The raw sockaddr stores a leading NUL and does not add a trailing NUL.
 		unixAddr, err := ResolveUnixAddr("unixpacket", "@")
 		if err != nil {
 			t.Fatalf("ResolveUnixAddr: %v", err)
@@ -37,7 +37,7 @@ func TestUnixSockaddr(t *testing.T) {
 			return
 		}
 		ptr, n := unixSa.Raw()
-		expectedLen := uint32(sizeofShort + 1 + 1) // family + "@" + NUL
+		expectedLen := uint32(sizeofShort + 1) // family + abstract marker (rewritten to NUL)
 		if n != expectedLen {
 			t.Errorf("unix sockaddr bad length expected %d but got %d", expectedLen, n)
 			return
@@ -48,9 +48,9 @@ func TestUnixSockaddr(t *testing.T) {
 			t.Errorf("unix sockaddr bad family expected AF_UNIX but got %x", family)
 			return
 		}
-		// Path should be "@" followed by NUL
-		if b[sizeofShort] != '@' {
-			t.Errorf("unix sockaddr expected '@' but got %c", b[sizeofShort])
+		// Path should start with a NUL byte in the raw kernel form.
+		if b[sizeofShort] != 0 {
+			t.Errorf("unix sockaddr expected leading NUL but got %d", b[sizeofShort])
 			return
 		}
 	})

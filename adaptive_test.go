@@ -102,10 +102,8 @@ func TestTCPListener_DeadlineTimeout(t *testing.T) {
 
 // TestTCPConn_ReadDeadlineTimeout verifies that TCPConn.Read
 // returns ErrTimedOut when read deadline expires.
-// Uses Unix socket pair for reliable connection establishment.
+// Uses a Linux-autobound Unix listener for reliable connection establishment.
 func TestTCPConn_ReadDeadlineTimeout(t *testing.T) {
-	// Use Unix socket pair for reliable connected sockets
-	// Then wrap them in UnixConn to test read deadline
 	laddr := &sock.UnixAddr{Name: "", Net: "unix"}
 	listener, err := sock.ListenUnix("unix", laddr)
 	if err != nil {
@@ -116,7 +114,12 @@ func TestTCPConn_ReadDeadlineTimeout(t *testing.T) {
 	boundAddr := listener.Addr().(*sock.UnixAddr)
 
 	// Connect in goroutine
+	stop := make(chan struct{})
 	done := make(chan struct{})
+	defer func() {
+		close(stop)
+		<-done
+	}()
 	go func() {
 		defer close(done)
 		client, err := sock.DialUnix("unix", nil, boundAddr)
@@ -126,7 +129,7 @@ func TestTCPConn_ReadDeadlineTimeout(t *testing.T) {
 		if client != nil {
 			defer client.Close()
 			// Keep connection alive until test completes
-			<-done
+			<-stop
 		}
 	}()
 
@@ -243,7 +246,6 @@ func TestUDPConn_ReadDeadlineTimeout(t *testing.T) {
 // TestUnixListener_NonBlockingAccept verifies that UnixListener.Accept
 // returns iox.ErrWouldBlock immediately when no connection is pending.
 func TestUnixListener_NonBlockingAccept(t *testing.T) {
-	// Use empty name for auto-generated path
 	laddr := &sock.UnixAddr{Name: "", Net: "unix"}
 	listener, err := sock.ListenUnix("unix", laddr)
 	if err != nil {
@@ -261,7 +263,6 @@ func TestUnixListener_NonBlockingAccept(t *testing.T) {
 // TestUnixListener_DeadlineTimeout verifies that UnixListener.Accept
 // returns ErrTimedOut when deadline expires without a connection.
 func TestUnixListener_DeadlineTimeout(t *testing.T) {
-	// Use empty name for auto-generated path
 	laddr := &sock.UnixAddr{Name: "", Net: "unix"}
 	listener, err := sock.ListenUnix("unix", laddr)
 	if err != nil {

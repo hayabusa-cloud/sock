@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"code.hybscloud.com/iox"
+	"code.hybscloud.com/zcall"
 )
 
 func TestSendRecvMessages(t *testing.T) {
@@ -34,6 +35,7 @@ func TestSendRecvMessages(t *testing.T) {
 		t.Fatalf("ListenUDP4 client: %v", err)
 	}
 	defer client.Close()
+	clientActualAddr := client.LocalAddr().(*UDPAddr)
 
 	// Prepare messages to send
 	msg1Data := []byte("message one")
@@ -63,7 +65,7 @@ func TestSendRecvMessages(t *testing.T) {
 	}
 
 	// Give messages time to arrive
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Prepare receive buffers
 	recvMsgs := []UDPMessage{
@@ -77,25 +79,42 @@ func TestSendRecvMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecvMessages: %v", err)
 	}
-	if n < 1 {
-		t.Fatalf("RecvMessages: received %d messages, want at least 1", n)
+	if n != len(recvMsgs) {
+		t.Fatalf("RecvMessages: received %d messages, want %d", n, len(recvMsgs))
 	}
 
 	// Verify received data
-	received := make(map[string]bool)
+	expected := map[string]struct{}{
+		string(msg1Data): {},
+		string(msg2Data): {},
+		string(msg3Data): {},
+	}
 	for i := range n {
 		data := recvMsgs[i].Buffers[0][:recvMsgs[i].N]
-		received[string(data)] = true
+		payload := string(data)
+		if _, ok := expected[payload]; !ok {
+			t.Fatalf("unexpected payload %q", payload)
+		}
+		delete(expected, payload)
 
 		// Verify address was populated
 		if recvMsgs[i].Addr == nil {
 			t.Errorf("recvMsgs[%d].Addr is nil", i)
+			continue
+		}
+		if !recvMsgs[i].Addr.IP.Equal(clientActualAddr.IP) || recvMsgs[i].Addr.Port != clientActualAddr.Port {
+			t.Errorf(
+				"recvMsgs[%d].Addr = %v:%d, want %v:%d",
+				i,
+				recvMsgs[i].Addr.IP,
+				recvMsgs[i].Addr.Port,
+				clientActualAddr.IP,
+				clientActualAddr.Port,
+			)
 		}
 	}
-
-	// Check that at least one expected message was received
-	if !received[string(msg1Data)] && !received[string(msg2Data)] && !received[string(msg3Data)] {
-		t.Error("none of the expected messages were received")
+	if len(expected) != 0 {
+		t.Fatalf("missing payloads after batch receive: %v", expected)
 	}
 }
 
@@ -403,48 +422,64 @@ func TestEncodeSockaddr(t *testing.T) {
 }
 
 func TestSendMessagesAdaptiveExpiredDeadline(t *testing.T) {
-	addr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-	conn, err := ListenUDP4(addr)
+	// Use Unix SOCK_DGRAM socketpair with tiny buffer to reliably trigger EAGAIN
+	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
 	if err != nil {
-		t.Fatalf("ListenUDP4: %v", err)
+		t.Fatalf("NetSocketPair: %v", err)
 	}
-	defer conn.Close()
+	defer pair[0].Close()
+	defer pair[1].Close()
 
-	// Set already expired deadline
+	SetSendBuffer(pair[0].fd, 4096)
+
+	// Fill the send buffer to trigger EAGAIN
+	payload := make([]byte, 2048)
+	for i := 0; i < 256; i++ {
+		_, werr := pair[0].Write(payload)
+		if werr != nil {
+			break
+		}
+	}
+
+	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+
+	// Set already expired deadline, then try adaptive send
 	conn.SetWriteDeadline(time.Now().Add(-1 * time.Second))
-
-	// UDP send rarely blocks, so the adaptive function will succeed
-	// on the first call (before checking the deadline).
-	// This test verifies the normal path through SendMessagesAdaptive.
-	msgs := []UDPMessage{{Addr: conn.laddr, Buffers: [][]byte{[]byte("test")}}}
-	n, err := conn.SendMessagesAdaptive(msgs)
-	if err != nil {
-		t.Fatalf("SendMessagesAdaptive: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("SendMessagesAdaptive: sent %d, want 1", n)
+	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
+	_, err = conn.SendMessagesAdaptive(msgs)
+	if err != ErrTimedOut {
+		t.Errorf("SendMessagesAdaptive expired deadline: got %v, want ErrTimedOut", err)
 	}
 }
 
 func TestSendMessagesAdaptiveTimeout(t *testing.T) {
-	addr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-	conn, err := ListenUDP4(addr)
+	// Use Unix SOCK_DGRAM socketpair with tiny buffer to reliably trigger EAGAIN
+	pair, err := NetSocketPair(zcall.AF_UNIX, zcall.SOCK_DGRAM, 0)
 	if err != nil {
-		t.Fatalf("ListenUDP4: %v", err)
+		t.Fatalf("NetSocketPair: %v", err)
 	}
-	defer conn.Close()
+	defer pair[0].Close()
+	defer pair[1].Close()
 
-	// Set short deadline
-	conn.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
+	SetSendBuffer(pair[0].fd, 4096)
 
-	// Try to send - should succeed without hitting timeout since UDP rarely blocks
-	msgs := []UDPMessage{{Addr: conn.laddr, Buffers: [][]byte{[]byte("test")}}}
-	n, err := conn.SendMessagesAdaptive(msgs)
-	if err != nil {
-		t.Fatalf("SendMessagesAdaptive: %v", err)
+	// Fill the send buffer to trigger EAGAIN
+	payload := make([]byte, 2048)
+	for i := 0; i < 256; i++ {
+		_, werr := pair[0].Write(payload)
+		if werr != nil {
+			break
+		}
 	}
-	if n != 1 {
-		t.Errorf("SendMessagesAdaptive: sent %d, want 1", n)
+
+	conn := &UDPConn{UDPSocket: &UDPSocket{NetSocket: pair[0]}}
+
+	// Set short deadline — should enter retry loop then time out
+	conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
+	msgs := []UDPMessage{{Buffers: [][]byte{payload}}}
+	_, err = conn.SendMessagesAdaptive(msgs)
+	if err != ErrTimedOut {
+		t.Errorf("SendMessagesAdaptive timeout: got %v, want ErrTimedOut", err)
 	}
 }
 

@@ -8,6 +8,7 @@ package sock
 
 import (
 	"testing"
+	"unsafe"
 
 	"code.hybscloud.com/zcall"
 )
@@ -26,6 +27,12 @@ func skipIfNoSCTP(t *testing.T) *SCTPSocket {
 		t.Fatalf("NewSCTPSocket4: %v", err)
 	}
 	return sock
+}
+
+func TestSCTPAssocValueStruct(t *testing.T) {
+	if got := unsafe.Sizeof(sctpAssocValue{}); got != 8 {
+		t.Fatalf("unsafe.Sizeof(sctpAssocValue{}) = %d, want 8", got)
+	}
 }
 
 func TestSCTPNodelay(t *testing.T) {
@@ -225,32 +232,19 @@ func TestSCTPContext(t *testing.T) {
 	sock := skipIfNoSCTP(t)
 	defer sock.Close()
 
-	// Note: SCTP_CONTEXT requires an sctp_assoc_value structure with association ID.
-	// On an unconnected socket, setting context may fail with EINVAL.
-	// We test what's possible at the socket level.
+	const want uint32 = 12345
 
-	// Try to get the default context
+	err := SetSCTPContext(sock.fd, want)
+	if err != nil {
+		t.Fatalf("SetSCTPContext: %v", err)
+	}
+
 	ctx, err := GetSCTPContext(sock.fd)
-	if err != nil {
-		// This is expected on some kernel versions for unconnected sockets
-		t.Logf("GetSCTPContext on unconnected socket: %v (expected on some systems)", err)
-		return
-	}
-	t.Logf("default SCTP_CONTEXT: %d", ctx)
-
-	// Try to set context - may fail on unconnected sockets
-	err = SetSCTPContext(sock.fd, 12345)
-	if err != nil {
-		t.Logf("SetSCTPContext on unconnected socket: %v (expected on some systems)", err)
-		return
-	}
-
-	ctx, err = GetSCTPContext(sock.fd)
 	if err != nil {
 		t.Fatalf("GetSCTPContext: %v", err)
 	}
-	if ctx != 12345 {
-		t.Errorf("expected SCTP_CONTEXT=12345, got %d", ctx)
+	if ctx != want {
+		t.Errorf("expected SCTP_CONTEXT=%d, got %d", want, ctx)
 	}
 }
 
