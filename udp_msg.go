@@ -9,7 +9,6 @@ package sock
 import (
 	"unsafe"
 
-	"code.hybscloud.com/iox"
 	"code.hybscloud.com/zcall"
 )
 
@@ -27,36 +26,9 @@ import (
 // if no data is available. When a read deadline is set via SetReadDeadline,
 // the operation retries with backoff until success or deadline exceeded.
 func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, err error) {
-	n, oobn, flags, addr, err = c.readMsgUDP(b, oob)
-	if err != iox.ErrWouldBlock {
-		return
-	}
-
-	// No deadline set: return immediately (non-blocking contract)
-	if !c.deadline.hasReadDeadline() {
-		return
-	}
-
-	// Check if already expired
-	if c.deadline.readExpired() {
-		return 0, 0, 0, nil, ErrTimedOut
-	}
-
-	// Adapt: retry with backoff until deadline
-	var backoff netBackoff
-	for {
-		backoff.wait()
-
-		n, oobn, flags, addr, err = c.readMsgUDP(b, oob)
-		if err != iox.ErrWouldBlock {
-			backoff.done()
-			return
-		}
-
-		if c.deadline.readExpired() {
-			return 0, 0, 0, nil, ErrTimedOut
-		}
-	}
+	return adaptiveReadMsg(func() (int, int, int, *UDPAddr, error) {
+		return c.readMsgUDP(b, oob)
+	}, &c.deadline)
 }
 
 func (c *UDPConn) readMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, err error) {
@@ -105,36 +77,9 @@ func (c *UDPConn) readMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 // if the socket buffer is full. When a write deadline is set via SetWriteDeadline,
 // the operation retries with backoff until success or deadline exceeded.
 func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {
-	n, oobn, err = c.writeMsgUDP(b, oob, addr)
-	if err != iox.ErrWouldBlock {
-		return
-	}
-
-	// No deadline set: return immediately (non-blocking contract)
-	if !c.deadline.hasWriteDeadline() {
-		return
-	}
-
-	// Check if already expired
-	if c.deadline.writeExpired() {
-		return 0, 0, ErrTimedOut
-	}
-
-	// Adapt: retry with backoff until deadline
-	var backoff netBackoff
-	for {
-		backoff.wait()
-
-		n, oobn, err = c.writeMsgUDP(b, oob, addr)
-		if err != iox.ErrWouldBlock {
-			backoff.done()
-			return
-		}
-
-		if c.deadline.writeExpired() {
-			return 0, 0, ErrTimedOut
-		}
-	}
+	return adaptiveWriteMsg(func() (int, int, error) {
+		return c.writeMsgUDP(b, oob, addr)
+	}, &c.deadline)
 }
 
 func (c *UDPConn) writeMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {

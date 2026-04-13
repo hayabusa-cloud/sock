@@ -107,6 +107,17 @@ func (d *deadlineState) writeExpired() bool {
 	return time.Now().UnixNano() >= ns
 }
 
+// retryInterrupted restarts a syscall attempt until it stops returning EINTR.
+// Wait policy starts only after the operation reaches ErrWouldBlock.
+func retryInterrupted(call func() error) error {
+	for {
+		err := call()
+		if err != ErrInterrupted {
+			return err
+		}
+	}
+}
+
 // adaptiveRead performs an adaptive read operation.
 // If no deadline is set, returns immediately (non-blocking).
 // If a deadline is set, retries with backoff until success or deadline exceeded.
@@ -123,12 +134,10 @@ func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, err
 	// First attempt (Strike)
 	var n int
 	var err error
-	for {
+	err = retryInterrupted(func() error {
 		n, err = readFn()
-		if err != ErrInterrupted {
-			break
-		}
-	}
+		return err
+	})
 	if err != iox.ErrWouldBlock {
 		return n, err
 	}
@@ -148,12 +157,10 @@ func adaptiveRead(readFn func() (int, error), deadline *deadlineState) (int, err
 	for {
 		backoff.wait()
 
-		for {
+		err = retryInterrupted(func() error {
 			n, err = readFn()
-			if err != ErrInterrupted {
-				break
-			}
-		}
+			return err
+		})
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return n, err
@@ -181,12 +188,10 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 	// First attempt (Strike)
 	var n int
 	var err error
-	for {
+	err = retryInterrupted(func() error {
 		n, err = writeFn()
-		if err != ErrInterrupted {
-			break
-		}
-	}
+		return err
+	})
 	if err != iox.ErrWouldBlock {
 		return n, err
 	}
@@ -206,12 +211,10 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 	for {
 		backoff.wait()
 
-		for {
+		err = retryInterrupted(func() error {
 			n, err = writeFn()
-			if err != ErrInterrupted {
-				break
-			}
-		}
+			return err
+		})
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return n, err
@@ -219,6 +222,91 @@ func adaptiveWrite(writeFn func() (int, error), deadline *deadlineState) (int, e
 
 		if deadline.writeExpired() {
 			return n, ErrTimedOut
+		}
+	}
+}
+
+// adaptiveReadMsg performs an adaptive message read operation.
+// If no deadline is set, returns immediately (non-blocking).
+// If a deadline is set, retries with backoff until success or deadline exceeded.
+func adaptiveReadMsg(readFn func() (int, int, int, *UDPAddr, error), deadline *deadlineState) (int, int, int, *UDPAddr, error) {
+	var n, oobn, flags int
+	var addr *UDPAddr
+	var err error
+
+	err = retryInterrupted(func() error {
+		n, oobn, flags, addr, err = readFn()
+		return err
+	})
+	if err != iox.ErrWouldBlock {
+		return n, oobn, flags, addr, err
+	}
+
+	if !deadline.hasReadDeadline() {
+		return n, oobn, flags, addr, err
+	}
+
+	if deadline.readExpired() {
+		return 0, 0, 0, nil, ErrTimedOut
+	}
+
+	var backoff netBackoff
+	for {
+		backoff.wait()
+
+		err = retryInterrupted(func() error {
+			n, oobn, flags, addr, err = readFn()
+			return err
+		})
+		if err != iox.ErrWouldBlock {
+			backoff.done()
+			return n, oobn, flags, addr, err
+		}
+
+		if deadline.readExpired() {
+			return 0, 0, 0, nil, ErrTimedOut
+		}
+	}
+}
+
+// adaptiveWriteMsg performs an adaptive message write operation.
+// If no deadline is set, returns immediately (non-blocking).
+// If a deadline is set, retries with backoff until success or deadline exceeded.
+func adaptiveWriteMsg(writeFn func() (int, int, error), deadline *deadlineState) (int, int, error) {
+	var n, oobn int
+	var err error
+
+	err = retryInterrupted(func() error {
+		n, oobn, err = writeFn()
+		return err
+	})
+	if err != iox.ErrWouldBlock {
+		return n, oobn, err
+	}
+
+	if !deadline.hasWriteDeadline() {
+		return n, oobn, err
+	}
+
+	if deadline.writeExpired() {
+		return 0, 0, ErrTimedOut
+	}
+
+	var backoff netBackoff
+	for {
+		backoff.wait()
+
+		err = retryInterrupted(func() error {
+			n, oobn, err = writeFn()
+			return err
+		})
+		if err != iox.ErrWouldBlock {
+			backoff.done()
+			return n, oobn, err
+		}
+
+		if deadline.writeExpired() {
+			return 0, 0, ErrTimedOut
 		}
 	}
 }
@@ -239,12 +327,10 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 	// First attempt (Strike) with EINTR retry
 	var result T
 	var err error
-	for {
+	err = retryInterrupted(func() error {
 		result, err = acceptFn()
-		if err != ErrInterrupted {
-			break
-		}
-	}
+		return err
+	})
 	if err != iox.ErrWouldBlock {
 		return result, err
 	}
@@ -264,12 +350,10 @@ func adaptiveAccept[T any](acceptFn func() (T, error), deadlineNs int64) (T, err
 	for {
 		backoff.wait()
 
-		for {
+		err = retryInterrupted(func() error {
 			result, err = acceptFn()
-			if err != ErrInterrupted {
-				break
-			}
-		}
+			return err
+		})
 		if err != iox.ErrWouldBlock {
 			backoff.done()
 			return result, err
