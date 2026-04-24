@@ -82,6 +82,11 @@ sock implements **Strike** and **Adapt**. Spin is not used here because socket o
 
 - **Non-blocking by default**: `Read`, `Write`, `Accept`, and `Dial` operations return immediately with `iox.ErrWouldBlock` if the kernel is not ready.
 - **Deadline-driven adaptation**: Only when a deadline is explicitly set (via `SetDeadline`, `SetReadDeadline`, or `SetWriteDeadline`) does the operation enter a retry loop with progressive backoff.
+- **Outcome classification**: byte counts and returned values carry progress, while semantic errors carry control.
+  Direct `sock` calls usually surface `iox.ErrWouldBlock` on not-ready paths and `sock.ErrInProgress` on pending
+  connect;
+  `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic`, and `iox.IsProgress` remain shared classifier vocabulary for helpers
+  layered above `sock`.
 - **Non-blocking Dial**: Unlike `net.Dial`, functions like `DialTCP4` return immediately once the connection attempt starts. The TCP handshake may still be in progress (`ErrInProgress` is silently ignored). Use `TCPDialer` with a timeout for blocking behavior:
 
 ```go

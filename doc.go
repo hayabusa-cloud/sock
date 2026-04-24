@@ -45,11 +45,22 @@
 // Errors follow a layered semantic model:
 //
 //   - [iox.ErrWouldBlock]: Control flow signal, not a failure. The operation
-//     cannot complete without blocking. Retry when the kernel is ready.
+//     cannot make further progress without blocking right now; wait until the
+//     kernel is ready or consult your owned wait policy before retrying.
+//     Progress, if any, is reported via the returned count or result, not via
+//     which error is returned.
+//   - [iox.ErrMore]: Shared `iox` classifier signal: progress already happened
+//     and the operation remains active. Plain `sock` socket calls below usually
+//     surface [iox.ErrWouldBlock] / [ErrInProgress] directly; [iox.ErrMore]
+//     mainly appears from helpers and policies layered above `sock`.
 //   - [ErrTimedOut]: Deadline exceeded during adaptive retry.
 //   - [ErrInProgress]: Connection attempt started but handshake incomplete.
 //     For non-blocking dial, this is expected behavior.
 //   - Other errors: Actual failures (connection refused, reset, etc.)
+//
+// As a rule, counts/results carry progress while semantic errors carry control.
+// Use [iox.Classify], [iox.IsSemantic], [iox.IsNonFailure], and
+// [iox.IsProgress] when reasoning across package boundaries.
 //
 // # Architecture
 //

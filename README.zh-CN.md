@@ -82,6 +82,9 @@ sock 实现了 **Strike** 和 **Adapt**。由于套接字操作等待的是内�
 
 - **默认非阻塞**：`Read`、`Write`、`Accept` 和 `Dial` 操作在内核未就绪时立即返回 `iox.ErrWouldBlock`。
 - **截止时间驱动的自适应**：只有当显式设置截止时间（通过 `SetDeadline`、`SetReadDeadline` 或 `SetWriteDeadline`）时，操作才会进入带渐进退避的重试循环。
+- **结果分类**：进度由字节计数和返回值承载，控制由语义错误承载。`sock` 的直接调用通常在未就绪时返回
+  `iox.ErrWouldBlock`，在连接仍处于挂起状态时返回 `sock.ErrInProgress`；`iox.ErrMore`、`iox.Classify`、
+  `iox.IsSemantic` 和 `iox.IsProgress` 仍是 `sock` 之上辅助层使用的共享分类词汇。
 - **非阻塞 Dial**：与 `net.Dial` 不同，`DialTCP4` 等函数在连接尝试开始后立即返回。TCP 握手可能仍在进行中（`ErrInProgress` 被静默忽略）。如需阻塞行为，请使用带超时的 `TCPDialer`：
 
 ```go

@@ -35,6 +35,9 @@ I/O with no deadline returns `ErrWouldBlock` when readiness is absent.
 Connect keeps `ErrInProgress` distinct, while Linux AF_UNIX may also surface
 pending as `iox.ErrWouldBlock`. Deadlines activate internal adaptive retry and
 may surface `ErrTimedOut` instead.
+Most direct `sock` methods therefore surface `ErrWouldBlock` / `ErrInProgress`
+more often than `ErrMore`; treat `ErrMore` as part of the shared `iox`
+classifier surface and helper/policy layers above bare socket syscalls.
 
 ## Three-Tier Progress Model
 

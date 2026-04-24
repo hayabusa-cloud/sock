@@ -82,6 +82,9 @@ sockは**Strike**と**Adapt**を実装します。ソケット操作はカーネ
 
 - **デフォルトでノンブロッキング**: `Read`、`Write`、`Accept`、`Dial`操作はカーネルが準備できていない場合、即座に`iox.ErrWouldBlock`を返します。
 - **デッドライン駆動の適応**: デッドラインが明示的に設定された場合（`SetDeadline`、`SetReadDeadline`、`SetWriteDeadline`経由）のみ、操作は漸進的バックオフ付きのリトライループに入ります。
+- **結果分類**: 進捗はバイト数や戻り値の側に載り、制御はセマンティックエラーの側に載ります。`sock` の直接呼び出しは、未準備時には主に
+  `iox.ErrWouldBlock`、接続保留中には `sock.ErrInProgress` を返します。`iox.ErrMore`、`iox.Classify`、`iox.IsSemantic`、
+  `iox.IsProgress` は、`sock` の上に積まれたヘルパー層でも使う共有の分類語彙です。
 - **ノンブロッキングDial**: `net.Dial`と異なり、`DialTCP4`などの関数は接続試行開始後すぐに戻ります。TCPハンドシェイクはまだ進行中の場合があります（`ErrInProgress`は暗黙的に無視されます）。ブロッキング動作にはタイムアウト付きの`TCPDialer`を使用してください：
 
 ```go
