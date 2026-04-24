@@ -164,19 +164,30 @@ go test -v -count=1 code.hybscloud.com/sock/examples
 
 ### The algebra behind `iox`
 
-Every I/O call in `iox` produces a value in a four-element outcome lattice:
+Every I/O call in `iox` classifies into four observable cases:
 
 ```
 Outcome = { OK, WouldBlock, More, Failure }
 ```
 
-`OK` and `Failure` are terminal: the operation completed or broke. `WouldBlock` and `More` are *semantic*
-(non-terminal): they signal that the operation can resume. `Classify(err) → Outcome` is the universal
-classifier; `IsSemantic`, `IsNonFailure`, and `IsProgress` are derived predicates on this lattice.
+`OK` and `Failure` are terminal: the operation completed or broke. `WouldBlock`
+and `More` are *semantic* (non-terminal): they signal that the operation can
+resume. `Classify(err) → Outcome` is the universal classifier; `IsSemantic`,
+`IsNonFailure`, and `IsProgress` are derived predicates on this carrier.
 
-Ordering (information content): `OK < WouldBlock < More < Failure`. `OK` means done; `WouldBlock`
-means no progress is available yet and the caller must wait or retry; `More` means progress happened
-and more completions remain; `Failure` is unrecoverable.
+For the current canon, the stable facts are:
+
+- counts carry progress; errors carry control;
+- `OK` is completion, `Failure` is terminal failure;
+- `WouldBlock` means no progress is available yet and the caller must wait or retry;
+- `More` means progress happened and more completions remain;
+- the base calculus does **not** force a unique global order between `WouldBlock`
+  and `More`.
+
+For the current `sock/examples` tree specifically, plain `sock` calls mainly
+surface `ErrWouldBlock` directly. `ErrMore` belongs to the shared `iox`
+classifier vocabulary and appears primarily in the referenced helper/policy
+layers above bare socket syscalls.
 
 ### Semantic errors as algebraic effects
 
