@@ -179,7 +179,8 @@ For the current canon, the stable facts are:
 
 - counts carry progress; errors carry control;
 - `OK` is completion, `Failure` is terminal failure;
-- `WouldBlock` means no progress is available yet and the caller must wait or retry;
+- `WouldBlock` is a readiness signal: the operation cannot proceed without blocking right now, and the caller must wait
+  or retry. Progress is read from the returned count/result, not inferred from `WouldBlock` itself;
 - `More` means progress happened and more completions remain;
 - the base calculus does **not** force a unique global order between `WouldBlock`
   and `More`.

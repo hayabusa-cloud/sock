@@ -12,9 +12,9 @@
 // mode, use `iox.Backoff` in caller-owned retry loops, enable deadline-driven
 // adaptive retry inside `sock`, and hand raw file descriptors to caller-owned
 // loops or runtimes above `sock`. The direct examples mainly surface the
-// `ErrWouldBlock` / `ErrInProgress` boundary; the wider `iox` classifier surface
-// (`ErrMore`, `Classify`, `IsSemantic`, `IsProgress`) remains relevant for
-// helpers layered above `sock`.
+// `iox.ErrWouldBlock` / `sock.ErrInProgress` boundary; the wider `iox`
+// classifier surface (`iox.ErrMore`, `iox.Classify`, `iox.IsSemantic`,
+// `iox.IsProgress`) remains relevant for helpers layered above `sock`.
 //
 // # Reading Order
 //

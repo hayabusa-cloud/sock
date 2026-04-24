@@ -45,8 +45,10 @@
 // Errors follow a layered semantic model:
 //
 //   - [iox.ErrWouldBlock]: Control flow signal, not a failure. The operation
-//     made no progress on this attempt. Retry when the kernel is ready or when
-//     your owned wait policy says to try again.
+//     cannot make further progress without blocking right now; wait until the
+//     kernel is ready or consult your owned wait policy before retrying.
+//     Progress, if any, is reported via the returned count or result, not via
+//     which error is returned.
 //   - [iox.ErrMore]: Shared `iox` classifier signal: progress already happened
 //     and the operation remains active. Plain `sock` socket calls below usually
 //     surface [iox.ErrWouldBlock] / [ErrInProgress] directly; [iox.ErrMore]
