@@ -80,7 +80,7 @@
 //   - [UDPSocket], [UDPConn] for UDP datagrams
 //   - [SCTPSocket], [SCTPConn], [SCTPListener] for SCTP (Linux only)
 //   - [UnixSocket], [UnixConn], [UnixListener] for Unix domain sockets
-//   - [RawSocket], [RawConn] for raw IP (requires CAP_NET_RAW)
+//   - [RawSocket], [RawConn] for raw IP (requires -tags rawsock and CAP_NET_RAW)
 //   - [Link], [Links], [LinkByName], [LinkByIndex] for Linux network link queries
 //
 // All sockets expose [iofd.FD] via the FD method for io_uring integration and

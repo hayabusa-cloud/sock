@@ -47,7 +47,7 @@ NetSocket（基类）
 ├── UDPSocket → UDPConn
 ├── SCTPSocket → SCTPConn, SCTPListener (Linux)
 ├── UnixSocket → UnixConn, UnixListener
-└── RawSocket → RawConn (CAP_NET_RAW)
+└── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
 所有套接字都暴露 `FD() *iofd.FD` 以便与 io_uring 和其他异步 I/O 机制集成。
@@ -163,7 +163,7 @@ pair[0].Write([]byte("ping"))
 pair[1].Read(buf)
 ```
 
-### Raw 套接字（需要 CAP_NET_RAW）
+### Raw 套接字（需要 -tags rawsock 和 CAP_NET_RAW）
 
 ```go
 // ICMP ping
