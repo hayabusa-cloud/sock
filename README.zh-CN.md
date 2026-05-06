@@ -256,7 +256,7 @@ if err == sock.ErrTimedOut {
 本包提供与 Go 标准 `net` 类型的无缝转换：
 
 ```go
-// 将 net.TCPAddr 转换为 Sockaddr（零分配）
+// 为兼容性将 net.TCPAddr 转换为 Sockaddr
 netAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080}
 sockaddr := sock.TCPAddrToSockaddr(netAddr)
 

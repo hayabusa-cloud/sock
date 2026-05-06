@@ -258,7 +258,7 @@ if err == sock.ErrTimedOut {
 The package provides seamless conversion with Go's standard `net` types:
 
 ```go
-// Convert net.TCPAddr to Sockaddr (zero-allocation)
+// Convert net.TCPAddr to Sockaddr for compatibility
 netAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080}
 sockaddr := sock.TCPAddrToSockaddr(netAddr)
 
