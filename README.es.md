@@ -47,7 +47,7 @@ NetSocket (base)
 ├── UDPSocket → UDPConn
 ├── SCTPSocket → SCTPConn, SCTPListener (Linux)
 ├── UnixSocket → UnixConn, UnixListener
-└── RawSocket → RawConn (CAP_NET_RAW)
+└── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
 Todos los sockets exponen `FD() *iofd.FD` para integración con io_uring y otros mecanismos de I/O asíncrona.
@@ -164,7 +164,7 @@ pair[0].Write([]byte("ping"))
 pair[1].Read(buf)
 ```
 
-### Sockets Raw (requiere CAP_NET_RAW)
+### Sockets Raw (requiere -tags rawsock y CAP_NET_RAW)
 
 ```go
 // ICMP ping
