@@ -256,7 +256,7 @@ if err == sock.ErrTimedOut {
 本パッケージはGo標準の`net`型とシームレスに変換できます：
 
 ```go
-// net.TCPAddrをSockaddrに変換（ゼロアロケーション）
+// net.TCPAddrを互換性のためにSockaddrに変換
 netAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080}
 sockaddr := sock.TCPAddrToSockaddr(netAddr)
 
