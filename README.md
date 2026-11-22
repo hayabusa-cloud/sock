@@ -292,6 +292,8 @@ To compare `sock` with Go’s `net` package, run `make bench BENCH=UDPDelivery`.
 
 Run `make bench BENCH=UDPBatch` to compare `SendMessages` and `RecvMessages` with scalar `WriteMsgUDP` and `ReadMsgUDP` calls. Both send bursts of 1, 8, or 32 datagrams at 64 bytes, and 8 at 1,200 bytes. `ns/datagram` averages the time per delivered datagram. `datagrams/send-call` and `datagrams/recv-call` count deliveries per API call, and `allocs/op` covers one complete burst.
 
+Run `make bench BENCH=StreamDelivery` to compare `sock` and `net` on established IPv4 TCP and Unix streams. For 64 bytes, `ns/op` includes the write and the receiver’s acknowledgment after checking the payload. For 1 MiB, compare payload `MB/s` with 4 KiB and 64 KiB writes. Both use reads of up to 64 KiB and count each delivered byte once.
+
 To compare revisions, save the output from each on the same machine with the same kernel and Go version, then run `benchstat before.txt after.txt`. The Benchmarks workflow publishes the raw samples in its job summary and as a downloadable artifact.
 
 ## License

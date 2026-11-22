@@ -291,6 +291,8 @@ Pour comparer `sock` au paquet `net` de Go, exécutez `make bench BENCH=UDPDeliv
 
 Exécutez `make bench BENCH=UDPBatch` pour comparer `SendMessages` et `RecvMessages` aux appels individuels à `WriteMsgUDP` et `ReadMsgUDP`. Les deux méthodes envoient des rafales de 1, 8 ou 32 datagrammes de 64 octets et de 8 datagrammes de 1 200 octets. `ns/datagram` donne le temps moyen par datagramme livré. `datagrams/send-call` et `datagrams/recv-call` donnent le nombre moyen de datagrammes livrés par appel d’envoi et de réception, et `allocs/op` compte les allocations par rafale complète.
 
+Exécutez `make bench BENCH=StreamDelivery` pour comparer `sock` et `net` sur des connexions TCP sur IPv4 et des sockets de flux Unix déjà établies. Pour 64 octets, `ns/op` inclut l’écriture et la confirmation du récepteur après vérification des données. Pour 1 MiB, comparez le débit utile en `MB/s` avec des écritures de 4 KiB et de 64 KiB. Dans les deux cas, chaque lecture porte sur 64 KiB au plus et chaque octet reçu est compté une seule fois.
+
 Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 
 ## Licence

@@ -291,6 +291,8 @@ Para comparar `sock` con el paquete `net` de Go, ejecuta `make bench BENCH=UDPDe
 
 Ejecuta `make bench BENCH=UDPBatch` para comparar `SendMessages` y `RecvMessages` con las llamadas individuales a `WriteMsgUDP` y `ReadMsgUDP`. Ambos métodos envían ráfagas de 1, 8 o 32 datagramas de 64 bytes y de 8 datagramas de 1200 bytes. `ns/datagram` indica el tiempo medio por datagrama entregado. `datagrams/send-call` y `datagrams/recv-call` indican cuántos datagramas se entregan por llamada de envío y de recepción, y `allocs/op` cuenta las asignaciones por ráfaga completa.
 
+Ejecuta `make bench BENCH=StreamDelivery` para comparar `sock` y `net` en conexiones TCP sobre IPv4 y de flujo Unix ya establecidas. Para 64 bytes, `ns/op` incluye la escritura y la confirmación del receptor tras verificar los datos. Para 1 MiB, compara los `MB/s` de carga útil con escrituras de 4 KiB y 64 KiB. En ambos casos se leen hasta 64 KiB por llamada y cada byte entregado se cuenta una sola vez.
+
 Para comparar revisiones, guarda la salida de cada una en la misma máquina con las mismas versiones del kernel y de Go. Luego ejecuta `benchstat before.txt after.txt`. El flujo de trabajo Benchmarks publica las muestras en el resumen de la ejecución y en un archivo descargable.
 
 ## Licencia
