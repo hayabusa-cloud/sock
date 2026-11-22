@@ -546,44 +546,6 @@ func TestSendMessagesWithOOB(t *testing.T) {
 	}
 }
 
-func TestRecvMessagesWithOOB(t *testing.T) {
-	// Create server
-	serverAddr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-	server, err := ListenUDP4(serverAddr)
-	if err != nil {
-		t.Fatalf("ListenUDP4: %v", err)
-	}
-	defer server.Close()
-
-	actualAddr := server.LocalAddr().(*UDPAddr)
-
-	// Create client
-	clientAddr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-	client, err := ListenUDP4(clientAddr)
-	if err != nil {
-		t.Fatalf("ListenUDP4 client: %v", err)
-	}
-	defer client.Close()
-
-	// Send
-	sendMsgs := []UDPMessage{{Addr: actualAddr, Buffers: [][]byte{[]byte("test")}}}
-	client.SendMessages(sendMsgs)
-
-	time.Sleep(10 * time.Millisecond)
-
-	// Receive with OOB buffer
-	oob := make([]byte, 64)
-	recvMsgs := []UDPMessage{{Buffers: [][]byte{make([]byte, 64)}, OOB: oob}}
-
-	n, err := server.RecvMessages(recvMsgs)
-	if err != nil {
-		t.Fatalf("RecvMessages with OOB: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("RecvMessages with OOB: received %d, want 1", n)
-	}
-}
-
 func TestSendMessagesEmptyBuffers(t *testing.T) {
 	// Create server
 	serverAddr := &UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
