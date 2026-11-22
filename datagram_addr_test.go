@@ -7,6 +7,7 @@
 package sock_test
 
 import (
+	"io"
 	"testing"
 
 	"code.hybscloud.com/iox"
@@ -83,6 +84,56 @@ func TestUDPReadIntoEmptyBuffer(t *testing.T) {
 	}
 	if n, err := conn.Read(nil); n != 0 || err != iox.ErrWouldBlock {
 		t.Fatalf("Read(nil) on empty socket = (%d, %v)", n, err)
+	}
+}
+
+func TestConnectedUDPDatagrams(t *testing.T) {
+	peer, err := sock.ListenUDP4(&sock.UDPAddr{IP: sock.IPv4LoopBack})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	conn, err := sock.DialUDP4(nil, peer.LocalAddr().(*sock.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	oversize := make([]byte, 1<<16)
+	for _, tc := range []struct {
+		name string
+		rw   io.ReadWriter
+	}{{"UDPConn", conn}, {"UDPSocket", conn.UDPSocket}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf [1]byte
+			if n, err := tc.rw.Write(nil); n != 0 || err != nil {
+				t.Fatalf("Write(nil) = (%d, %v)", n, err)
+			}
+			if n, from, err := peer.ReadFrom(buf[:]); n != 0 || from == nil || err != nil {
+				t.Errorf("peer ReadFrom after empty write = (%d, %v, %v)", n, from, err)
+			}
+			if n, err := peer.WriteTo(nil, conn.LocalAddr()); n != 0 || err != nil {
+				t.Fatalf("peer WriteTo(nil) = (%d, %v)", n, err)
+			}
+			if n, err := tc.rw.Read(buf[:]); n != 0 || err != nil {
+				t.Errorf("Read empty datagram = (%d, %v)", n, err)
+			}
+			if n, err := tc.rw.Read(nil); n != 0 || err != iox.ErrWouldBlock {
+				t.Errorf("Read(nil) on empty socket = (%d, %v)", n, err)
+			}
+			if n, err := peer.WriteTo([]byte{'x'}, conn.LocalAddr()); n != 1 || err != nil {
+				t.Fatalf("peer WriteTo = (%d, %v)", n, err)
+			}
+			if n, err := tc.rw.Read(nil); n != 0 || err != nil {
+				t.Fatalf("Read(nil) with queued datagram = (%d, %v)", n, err)
+			}
+			if n, err := tc.rw.Read(buf[:]); n != 0 || err != iox.ErrWouldBlock {
+				t.Errorf("Read after consuming datagram = (%d, %v)", n, err)
+			}
+			if n, err := tc.rw.Write(oversize); n != 0 || err != sock.ErrMessageTooLarge {
+				t.Errorf("Write oversized datagram = (%d, %v), want (0, ErrMessageTooLarge)", n, err)
+			}
+		})
 	}
 }
 

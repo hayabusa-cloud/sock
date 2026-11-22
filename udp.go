@@ -61,6 +61,11 @@ func applyUDPDefaults(fd *iofd.FD) error {
 //go:nosplit
 func (s *UDPSocket) Protocol() UnderlyingProtocol { return UnderlyingProtocolDgram }
 
+// Read receives one datagram and discards any bytes that do not fit in buf.
+func (s *UDPSocket) Read(buf []byte) (int, error) {
+	return s.recvDatagram(buf, nil, nil)
+}
+
 func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
 	var rsa RawSockaddrInet6
 	rsaLen := uint32(SizeofSockaddrInet6)
@@ -83,21 +88,32 @@ func (s *UDPSocket) recvDatagram(buf []byte, addr *RawSockaddrInet6, addrLen *ui
 	return int(n), nil
 }
 
+// Write sends one datagram to the connected peer, including an empty datagram.
+func (s *UDPSocket) Write(buf []byte) (int, error) {
+	return s.sendDatagram(buf, nil)
+}
+
 func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
 	if addr == nil {
 		return 0, ErrInvalidParam
 	}
+	return s.sendDatagram(buf, addr)
+}
+
+func (s *UDPSocket) sendDatagram(buf []byte, addr *UDPAddr) (int, error) {
 	raw := s.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	var sa Sockaddr
-	if addr.IP.To4() != nil {
-		sa = udpAddrToSockaddr4(addr)
-	} else {
-		sa = udpAddrToSockaddr6(addr)
+	var ptr unsafe.Pointer
+	var length uint32
+	if addr != nil {
+		if addr.IP.To4() != nil {
+			ptr, length = udpAddrToSockaddr4(addr).Raw()
+		} else {
+			ptr, length = udpAddrToSockaddr6(addr).Raw()
+		}
 	}
-	ptr, length := sa.Raw()
 	n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
 	if errno != 0 {
 		return 0, errFromErrno(errno)
@@ -157,20 +173,17 @@ func (c *UDPConn) WriteTo(buf []byte, addr Addr) (int, error) {
 	return adaptiveWrite(func() (int, error) { return c.UDPSocket.SendTo(buf, udpAddr) }, &c.deadline)
 }
 
+// Read receives one datagram. An empty buf still consumes a queued datagram.
 func (c *UDPConn) Read(buf []byte) (int, error) {
-	return adaptiveRead(func() (int, error) {
-		if c.raddr == nil {
-			return c.recvDatagram(buf, nil, nil)
-		}
-		return c.NetSocket.Read(buf)
-	}, &c.deadline)
+	return adaptiveRead(func() (int, error) { return c.UDPSocket.Read(buf) }, &c.deadline)
 }
 
+// Write sends one datagram to the connected peer. An empty buf sends an empty datagram.
 func (c *UDPConn) Write(buf []byte) (int, error) {
 	if c.raddr == nil {
 		return 0, ErrNotConnected
 	}
-	return adaptiveWrite(func() (int, error) { return c.NetSocket.Write(buf) }, &c.deadline)
+	return adaptiveWrite(func() (int, error) { return c.UDPSocket.Write(buf) }, &c.deadline)
 }
 
 // SyscallConn returns a raw network connection for direct syscall access.
