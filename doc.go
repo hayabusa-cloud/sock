@@ -40,6 +40,8 @@
 //	    // Deadline exceeded
 //	}
 //
+// Each Accept call uses the listener deadline in effect when the call begins.
+//
 // # Error Semantics
 //
 // Errors follow a layered semantic model:
