@@ -126,6 +126,7 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
+// ReadFrom reads a datagram and returns its sender's address when available.
 func (c *UDPConn) ReadFrom(buf []byte) (int, Addr, error) {
 	var n int
 	var addr *UDPAddr
@@ -134,6 +135,9 @@ func (c *UDPConn) ReadFrom(buf []byte) (int, Addr, error) {
 		n, addr, recvErr = c.UDPSocket.RecvFrom(buf)
 		return n, recvErr
 	}, &c.deadline)
+	if addr == nil {
+		return n, nil, err
+	}
 	return n, addr, err
 }
 

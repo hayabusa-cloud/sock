@@ -145,6 +145,7 @@ func (c *UnixConn) Write(p []byte) (int, error) {
 }
 
 // ReadFrom reads a datagram and returns the sender's address with adaptive I/O.
+// A datagram from an unnamed sender has a nil source address.
 // For unconnected sockets. If no deadline is set, returns immediately with iox.ErrWouldBlock.
 func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
 	var n int
@@ -171,7 +172,9 @@ func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
 		addr = decodeUnixAddr(&rsa, rsaLen, unixSocketNetwork(c.typ))
 		return int(rn), nil
 	}, &c.deadline)
-
+	if addr == nil || addr.Name == "" {
+		return n, nil, err
+	}
 	return n, addr, err
 }
 
