@@ -65,10 +65,13 @@ func TestTCPListener_NonBlockingAccept(t *testing.T) {
 	}
 	defer listener.Close()
 
-	// Accept without any pending connection should return ErrWouldBlock
-	_, err = listener.Accept()
-	if err != iox.ErrWouldBlock {
-		t.Errorf("Accept without connection: expected iox.ErrWouldBlock, got %v", err)
+	allocs := testing.AllocsPerRun(100, func() {
+		if conn, err := listener.Accept(); conn != nil || err != iox.ErrWouldBlock {
+			t.Fatalf("Accept on empty queue = (%v, %v)", conn, err)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("Accept on empty queue = %g allocations per call, want 0", allocs)
 	}
 }
 

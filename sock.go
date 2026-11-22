@@ -172,7 +172,8 @@ func (s *NetSocket) Accept() (*NetSocket, *RawSockaddrAny, uint32, error) {
 		proto:   s.proto,
 		network: s.network,
 	}
-	return newSock, &addr, addrlen, nil
+	// Copy the peer address only on success so an empty queue needs no allocation.
+	return newSock, new(addr), addrlen, nil
 }
 
 func (s *NetSocket) Connect(addr Sockaddr) error {
