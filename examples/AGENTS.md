@@ -6,7 +6,7 @@ These files are black-box examples (`package sock_test`): they show how applicat
 reaching into package internals. Start with `doc.go` for the package-level overview, then open the scenario-specific
 test files.
 
-Platform: Linux (recommend 6.18 LTS), Go 1.26+.
+Platform: Linux (recommend 6.18 LTS), Go 1.27+.
 
 ## Ecosystem Position
 
