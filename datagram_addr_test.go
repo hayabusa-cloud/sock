@@ -33,6 +33,59 @@ func TestUDPReadFromSender(t *testing.T) {
 	}
 }
 
+func TestUDPReceiveAllocations(t *testing.T) {
+	receiver, err := sock.ListenUDP4(&sock.UDPAddr{IP: sock.IPv4LoopBack})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+
+	var buf [1]byte
+	allocs := testing.AllocsPerRun(100, func() {
+		if n, from, err := receiver.ReadFrom(buf[:]); n != 0 || from != nil || err != iox.ErrWouldBlock {
+			t.Fatalf("ReadFrom on empty socket = (%d, %#v, %v)", n, from, err)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("ReadFrom on empty socket = %g allocations per call, want 0", allocs)
+	}
+
+	sender, err := sock.DialUDP4(nil, receiver.LocalAddr().(*sock.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	payload := [...]byte{'x'}
+	allocs = testing.AllocsPerRun(100, func() {
+		if n, err := sender.Write(payload[:]); n != len(payload) || err != nil {
+			t.Fatalf("Write = (%d, %v)", n, err)
+		}
+		if n, err := receiver.Read(buf[:]); n != len(payload) || err != nil || buf != payload {
+			t.Fatalf("Read = (%d, %v), payload = %q", n, err, buf)
+		}
+	})
+	if allocs != 0 {
+		t.Errorf("Write and payload-only Read = %g allocations per datagram, want 0", allocs)
+	}
+}
+
+func TestUDPReadIntoEmptyBuffer(t *testing.T) {
+	conn, err := sock.ListenUDP4(&sock.UDPAddr{IP: sock.IPv4LoopBack})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if n, err := conn.WriteTo([]byte{'x'}, conn.LocalAddr()); n != 1 || err != nil {
+		t.Fatalf("WriteTo = (%d, %v)", n, err)
+	}
+	if n, err := conn.Read(nil); n != 0 || err != nil {
+		t.Fatalf("Read(nil) with queued datagram = (%d, %v)", n, err)
+	}
+	if n, err := conn.Read(nil); n != 0 || err != iox.ErrWouldBlock {
+		t.Fatalf("Read(nil) on empty socket = (%d, %v)", n, err)
+	}
+}
+
 func TestUnixReadFromUnnamedSender(t *testing.T) {
 	t.Chdir(t.TempDir())
 	addr := &sock.UnixAddr{Name: "receiver.sock", Net: "unixgram"}

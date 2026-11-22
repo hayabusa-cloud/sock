@@ -62,17 +62,25 @@ func applyUDPDefaults(fd *iofd.FD) error {
 func (s *UDPSocket) Protocol() UnderlyingProtocol { return UnderlyingProtocolDgram }
 
 func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
+	var rsa RawSockaddrInet6
+	rsaLen := uint32(SizeofSockaddrInet6)
+	n, err := s.recvDatagram(buf, &rsa, &rsaLen)
+	if err != nil {
+		return 0, nil, err
+	}
+	return n, decodeUDPAddr(&rsa), nil
+}
+
+func (s *UDPSocket) recvDatagram(buf []byte, addr *RawSockaddrInet6, addrLen *uint32) (int, error) {
 	raw := s.fd.Raw()
 	if raw < 0 {
-		return 0, nil, ErrClosed
+		return 0, ErrClosed
 	}
-	var rsa RawSockaddrAny
-	rsaLen := uint32(SizeofSockaddrAny)
-	n, errno := zcall.Recvfrom(uintptr(raw), buf, 0, unsafe.Pointer(&rsa), unsafe.Pointer(&rsaLen))
+	n, errno := zcall.Recvfrom(uintptr(raw), buf, 0, unsafe.Pointer(addr), unsafe.Pointer(addrLen))
 	if errno != 0 {
-		return 0, nil, errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
-	return int(n), decodeUDPAddr(&rsa), nil
+	return int(n), nil
 }
 
 func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
@@ -152,8 +160,7 @@ func (c *UDPConn) WriteTo(buf []byte, addr Addr) (int, error) {
 func (c *UDPConn) Read(buf []byte) (int, error) {
 	return adaptiveRead(func() (int, error) {
 		if c.raddr == nil {
-			n, _, err := c.UDPSocket.RecvFrom(buf)
-			return n, err
+			return c.recvDatagram(buf, nil, nil)
 		}
 		return c.NetSocket.Read(buf)
 	}, &c.deadline)
@@ -338,19 +345,30 @@ func udpAddrToSockaddr6(addr *UDPAddr) *SockaddrInet6 {
 	return NewSockaddrInet6(ip, uint16(addr.Port), zoneToScopeID(addr.Zone))
 }
 
-func decodeUDPAddr(raw *RawSockaddrAny) *UDPAddr {
+// A sockaddr_in6 has room for either UDP address family.
+func decodeUDPAddr(raw *RawSockaddrInet6) *UDPAddr {
 	if raw == nil {
 		return nil
 	}
-	switch raw.Addr.Family {
+	switch raw.Family {
 	case AF_INET:
 		sa := (*RawSockaddrInet4)(unsafe.Pointer(raw))
-		return &UDPAddr{IP: net.IP(sa.Addr[:]), Port: int(ntohs(sa.Port))}
+		return newUDPAddr(sa.Addr[:], sa.Port, "")
 	case AF_INET6:
-		sa := (*RawSockaddrInet6)(unsafe.Pointer(raw))
-		return &UDPAddr{IP: net.IP(sa.Addr[:]), Port: int(ntohs(sa.Port)), Zone: scopeIDToZone(sa.ScopeID)}
+		return newUDPAddr(raw.Addr[:], raw.Port, scopeIDToZone(raw.ScopeID))
 	}
 	return nil
+}
+
+func newUDPAddr(ip []byte, networkPort uint16, zone string) *UDPAddr {
+	// Keep the IP bytes and their address in one allocation.
+	sender := new(struct {
+		addr UDPAddr
+		ip   [net.IPv6len]byte
+	})
+	n := copy(sender.ip[:], ip)
+	sender.addr = UDPAddr{IP: sender.ip[:n:n], Port: int(ntohs(networkPort)), Zone: zone}
+	return &sender.addr
 }
 
 var (

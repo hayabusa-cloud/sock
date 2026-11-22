@@ -258,6 +258,10 @@ func TestSendRecvMessagesIPv6(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("RecvMessages IPv6: received %d, want 1", n)
 	}
+	from, want := recvMsgs[0].Addr, client.LocalAddr().(*UDPAddr)
+	if from == nil || from.Port != want.Port || !from.IP.Equal(want.IP) || from.Zone != want.Zone {
+		t.Errorf("RecvMessages IPv6 sender = %v, want %v", from, want)
+	}
 
 	received := recvMsgs[0].Buffers[0][:recvMsgs[0].N]
 	if !bytes.Equal(received, data) {

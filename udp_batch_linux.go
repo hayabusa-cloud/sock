@@ -120,14 +120,14 @@ func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 	// Allocate mmsghdr array and iovec arrays
 	mmsghdrs := make([]zcall.Mmsghdr, len(msgs))
 	iovecs := make([][]zcall.Iovec, len(msgs))
-	sockaddrs := make([]RawSockaddrAny, len(msgs))
+	sockaddrs := make([]RawSockaddrInet6, len(msgs))
 
 	for i := range msgs {
 		msg := &msgs[i]
 
 		// Set up sockaddr for receiving source address
 		mmsghdrs[i].Hdr.Name = (*byte)(unsafe.Pointer(&sockaddrs[i]))
-		mmsghdrs[i].Hdr.Namelen = SizeofSockaddrAny
+		mmsghdrs[i].Hdr.Namelen = SizeofSockaddrInet6
 
 		// Build iovec array for this message
 		if len(msg.Buffers) > 0 {

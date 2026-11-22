@@ -37,7 +37,7 @@ func (c *UDPConn) readMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 		return 0, 0, 0, nil, ErrClosed
 	}
 
-	var rsa RawSockaddrAny
+	var rsa RawSockaddrInet6
 	var iov zcall.Iovec
 	if len(b) > 0 {
 		iov.Base = &b[0]
@@ -46,7 +46,7 @@ func (c *UDPConn) readMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 
 	msg := zcall.Msghdr{
 		Name:    (*byte)(unsafe.Pointer(&rsa)),
-		Namelen: SizeofSockaddrAny,
+		Namelen: SizeofSockaddrInet6,
 		Iov:     &iov,
 		Iovlen:  1,
 	}
