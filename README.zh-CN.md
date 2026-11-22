@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -281,6 +281,12 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 | linux/loong64 | 完整 |
 | darwin/arm64 | 部分 |
 | freebsd/amd64 | 仅交叉编译 |
+
+## 基准测试
+
+在 Linux 上，`make bench` 使用 `-cpu=1 -benchtime=200ms` 将每项基准测试运行十次，记录耗时和内存分配情况。`make bench BENCH=UnixSocketPair_ReadWrite` 测量在已创建的 Unix 套接字对上写入五个字节并读回这五个字节的耗时。
+
+比较不同版本时，在同一台机器上使用相同的内核和 Go 版本，分别保存输出，再运行 `benchstat before.txt after.txt`。Benchmarks 工作流在作业摘要中列出原始数据，并提供下载。
 
 ## 许可证
 

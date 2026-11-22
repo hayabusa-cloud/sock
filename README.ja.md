@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -281,6 +281,12 @@ var _ sock.Addr = addr      // net.Addr互換
 | linux/loong64 | フル |
 | darwin/arm64 | 部分的 |
 | freebsd/amd64 | クロスコンパイルのみ |
+
+## ベンチマーク
+
+Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ベンチマークの処理時間とメモリ割り当てを 10 回ずつ計測します。`make bench BENCH=UnixSocketPair_ReadWrite` は、作成済みの Unix ソケットペアで 5 バイトを書き込み、読み戻すまでの時間を計測します。
+
+リビジョンを比較するには、同じマシンでカーネルと Go のバージョンをそろえてそれぞれの出力を保存し、`benchstat before.txt after.txt` を実行します。Benchmarks ワークフローは各回の測定結果をジョブのサマリーに掲載し、ダウンロード用のファイルにも保存します。
 
 ## ライセンス
 

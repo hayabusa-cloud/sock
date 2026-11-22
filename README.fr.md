@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -282,6 +282,12 @@ var _ sock.Addr = addr      // Compatible net.Addr
 | linux/loong64 | Complet |
 | darwin/arm64 | Partiel |
 | freebsd/amd64 | Cross-compile uniquement |
+
+## Mesures de performance
+
+Sous Linux, `make bench` exécute chaque benchmark dix fois avec `-cpu=1 -benchtime=200ms` et relève le temps d’exécution et les allocations mémoire. `make bench BENCH=UnixSocketPair_ReadWrite` mesure l’écriture de cinq octets suivie de leur lecture sur une paire de sockets Unix déjà créée.
+
+Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 
 ## Licence
 
