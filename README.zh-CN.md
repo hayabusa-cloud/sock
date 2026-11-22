@@ -286,6 +286,8 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 
 在 Linux 上，`make bench` 使用 `-cpu=1 -benchtime=200ms` 将每项基准测试运行十次，记录耗时和内存分配情况。`make bench BENCH=UnixSocketPair_ReadWrite` 测量在已创建的 Unix 套接字对上写入五个字节并读回这五个字节的耗时。
 
+运行 `make bench BENCH=UDPDelivery` 可比较 `sock` 和 Go 标准库 `net`。两者都在 IPv4 环回接口上逐个发送 64 字节和 1,200 字节的数据报。接收端逐个校验，随后统计每秒收到的数据报数（`datagrams/s`）和有效载荷吞吐量（`MB/s`）。
+
 比较不同版本时，在同一台机器上使用相同的内核和 Go 版本，分别保存输出，再运行 `benchstat before.txt after.txt`。Benchmarks 工作流在作业摘要中列出原始数据，并提供下载。
 
 ## 许可证

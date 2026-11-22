@@ -288,6 +288,8 @@ var _ sock.Addr = addr      // net.Addr compatible
 
 On Linux, `make bench` runs each benchmark ten times with `-cpu=1 -benchtime=200ms` and reports time and allocations. `make bench BENCH=UnixSocketPair_ReadWrite` measures a five-byte write followed by a read on an existing Unix socket pair.
 
+To compare `sock` with Go’s `net` package, run `make bench BENCH=UDPDelivery`. Each sends 64-byte and 1,200-byte datagrams over IPv4 loopback, one at a time. The receiver checks each datagram before it counts toward `datagrams/s` and payload `MB/s`.
+
 To compare revisions, save the output from each on the same machine with the same kernel and Go version, then run `benchstat before.txt after.txt`. The Benchmarks workflow publishes the raw samples in its job summary and as a downloadable artifact.
 
 ## License

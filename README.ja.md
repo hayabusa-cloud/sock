@@ -286,6 +286,8 @@ var _ sock.Addr = addr      // net.Addr互換
 
 Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ベンチマークの処理時間とメモリ割り当てを 10 回ずつ計測します。`make bench BENCH=UnixSocketPair_ReadWrite` は、作成済みの Unix ソケットペアで 5 バイトを書き込み、読み戻すまでの時間を計測します。
 
+`make bench BENCH=UDPDelivery` で、`sock` と Go 標準ライブラリの `net` を比較できます。どちらも IPv4 ループバックで 64 バイトと 1,200 バイトのデータグラムを 1 個ずつ送ります。受信側で各データグラムを検証し、毎秒の受信数（`datagrams/s`）とペイロードのスループット（`MB/s`）を集計します。
+
 リビジョンを比較するには、同じマシンでカーネルと Go のバージョンをそろえてそれぞれの出力を保存し、`benchstat before.txt after.txt` を実行します。Benchmarks ワークフローは各回の測定結果をジョブのサマリーに掲載し、ダウンロード用のファイルにも保存します。
 
 ## ライセンス

@@ -287,6 +287,8 @@ var _ sock.Addr = addr      // Compatible net.Addr
 
 Sous Linux, `make bench` exécute chaque benchmark dix fois avec `-cpu=1 -benchtime=200ms` et relève le temps d’exécution et les allocations mémoire. `make bench BENCH=UnixSocketPair_ReadWrite` mesure l’écriture de cinq octets suivie de leur lecture sur une paire de sockets Unix déjà créée.
 
+Pour comparer `sock` au paquet `net` de Go, exécutez `make bench BENCH=UDPDelivery`. Tous deux envoient des datagrammes de 64 et de 1 200 octets sur la boucle locale IPv4, un à la fois. Le récepteur vérifie chaque datagramme avant de le compter dans le débit en datagrammes (`datagrams/s`) et en octets utiles (`MB/s`).
+
 Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 
 ## Licence
