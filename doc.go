@@ -44,15 +44,10 @@
 //
 // Errors follow a layered semantic model:
 //
-//   - [iox.ErrWouldBlock]: Control flow signal, not a failure. The operation
-//     cannot make further progress without blocking right now; wait until the
-//     kernel is ready or consult your owned wait policy before retrying.
-//     Progress, if any, is reported via the returned count or result, not via
-//     which error is returned.
-//   - [iox.ErrMore]: Shared `iox` classifier signal: progress already happened
-//     and the operation remains active. Plain `sock` socket calls below usually
-//     surface [iox.ErrWouldBlock] / [ErrInProgress] directly; [iox.ErrMore]
-//     mainly appears from helpers and policies layered above `sock`.
+//   - [iox.ErrWouldBlock] means further progress requires readiness. Process any
+//     bytes already transferred before waiting to retry the remaining work.
+//   - [iox.ErrMore] means the operation remains active. Continue observing it
+//     even when the byte count is zero. Helpers above sock can return this signal.
 //   - [ErrTimedOut]: Deadline exceeded during adaptive retry.
 //   - [ErrInProgress]: Connection attempt started but handshake incomplete.
 //     For non-blocking dial, this is expected behavior.

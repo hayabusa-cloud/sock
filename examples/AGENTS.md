@@ -175,15 +175,12 @@ and `More` are *semantic* (non-terminal): they signal that the operation can
 resume. `Classify(err) → Outcome` is the universal classifier; `IsSemantic`,
 `IsNonFailure`, and `IsProgress` are derived predicates on this carrier.
 
-For the current canon, the stable facts are:
+For reads and writes, account for the returned count before handling the outcome.
 
-- counts carry progress; errors carry control;
-- `OK` is completion, `Failure` is terminal failure;
-- `WouldBlock` is a readiness signal: the operation cannot proceed without blocking right now, and the caller must wait
-  or retry. Progress is read from the returned count/result, not inferred from `WouldBlock` itself;
-- `More` means progress happened and more completions remain;
-- the base calculus does **not** force a unique global order between `WouldBlock`
-  and `More`.
+- `WouldBlock` means further progress requires readiness. If a read returns `(2, ErrWouldBlock)`, consume the two bytes before waiting to retry.
+- `More` means the operation remains active. On `(0, ErrMore)`, keep observing the same operation.
+
+Any ordering of `WouldBlock` and `More` comes from an explicit merge policy.
 
 For the current `sock/examples` tree specifically, plain `sock` calls mainly
 surface `ErrWouldBlock` directly. `ErrMore` belongs to the shared `iox`
@@ -196,9 +193,7 @@ In the algebraic-effects reading, `ErrWouldBlock` and `ErrMore` are *effect cons
 copy engine at a well-defined point and yield control to a handler. The handler decides whether to *resume*
 (retry) or *discharge* (return the signal to the caller).
 
-The standard `io.Copy` model has no effects: every non-nil, non-EOF error is terminal. `iox.Copy` extends
-this by recognising the two semantic errors as resumable suspension points, but with a fixed handler that
-always discharges (returns immediately). This is the *free* (uninterpreted) semantics.
+Bare `iox.Copy` returns control to the caller on a semantic signal. A partial write can also produce a recovery error as described below.
 
 ### SemanticPolicy as effect handler
 
@@ -214,8 +209,7 @@ where `Op` identifies the site (read-side vs write-side, direct vs WriterTo/Read
 - `PolicyReturn` — discharge the effect: propagate the semantic error to the caller.
 - `PolicyRetry`  — resume the effect: call `Yield(op)`, then re-enter the operation.
 
-`Yield` is the *delimited continuation*: it represents the wait/park/poll step between suspension and
-resumption. Its implementation is pluggable (runtime.Gosched, epoll wait, io_uring reap, backoff, etc.).
+`Yield(op)` runs before a retry. It can wait for readiness, poll a completion, or yield the processor. The copy loop then resumes.
 
 ### Composition: CopyPolicy and CopyNPolicy
 
@@ -225,33 +219,25 @@ resumption. Its implementation is pluggable (runtime.Gosched, epoll wait, io_uri
 CopyPolicy(dst, src, policy) = interpret(policy, Copy(dst, src))
 ```
 
-Without a policy (nil), the engine degenerates to `Copy` / `CopyN` — pure non-blocking, caller handles
-everything. With a policy, the engine becomes an *effect interpreter* that can absorb some or all semantic
-signals internally.
+A nil policy uses `Copy` or `CopyN`. An explicit policy handles exact `ErrWouldBlock` and `ErrMore` signals while work remains. Once the destination accepts the requested count, `CopyNPolicy` returns success.
 
-The built-in policies form a lattice of handler strategies:
+The copy policies choose which signals to retry.
 
 | Policy                         | WouldBlock         | More   | Character                                     |
 |--------------------------------|--------------------|--------|-----------------------------------------------|
 | `ReturnPolicy`                 | Return             | Return | Free (uninterpreted); identical to bare Copy  |
 | `YieldPolicy`                  | Retry (yield)      | Return | Absorbs readiness stalls, surfaces boundaries |
-| `YieldOnWriteWouldBlockPolicy` | Retry (write only) | Return | Asymmetric: writer backpressure only          |
+| `YieldOnWriteWouldBlockPolicy` | Retry writes and delegated copy calls | Return | Direct reads return to the caller |
 | `PolicyFunc{…}`                | custom             | custom | Fully programmable handler                    |
 
-### Partial-write recovery and the Seeker adjunction
+### Partial writes
 
-When a write-side semantic error occurs with partial progress (`nw < nr`), the engine faces a data-integrity
-problem: bytes were read from `src` but not fully written to `dst`. The resolution depends on the policy
-action:
+If a destination accepts two bytes of `hello` and returns `ErrWouldBlock`, the generic copy loop has three bytes left to write.
 
-- **PolicyRetry**: the engine loops on the remaining slice `buf[off:nr]`, guaranteeing forward progress.
-  No rollback needed — the continuation consumes the residual.
-- **PolicyReturn**: the engine attempts `src.Seek(delta, SeekCurrent)` to rewind the source. If `src`
-  is not seekable, `ErrNoSeeker` is returned to prevent silent data loss.
+- With `PolicyRetry`, the loop keeps `llo`, calls `Yield`, and retries that suffix. The destination may still be full.
+- With `PolicyReturn`, the loop tries to rewind the source by three bytes. A successful seek leaves `llo` available for the caller. A socket source cannot seek, so the copy returns `(2, iox.ErrNoSeeker)`. A failed seek on a seekable source returns the seek error.
 
-In categorical terms, `io.Seeker` acts as a *right adjoint* to the read functor: it provides the inverse
-morphism (rewind) that makes partial-read recovery natural. Non-seekable sources (sockets, pipes) lack this
-adjoint, so the only safe strategy is `PolicyRetry` on write-side effects.
+When `CopyPolicy` delegates to `WriterTo` or `ReaderFrom`, that method owns recovery of any unwritten bytes.
 
 ### Summary: the `iox` effect system
 
@@ -263,7 +249,7 @@ adjoint, so the only safe strategy is `PolicyRetry` on write-side effects.
                  │
             ┌────┴────┐
          terminal   semantic (effect)
-         (OK/Fail)     │
+         (OK/Fail)     │ exact sentinel and work remains
                        ▼
                  SemanticPolicy.On{WouldBlock,More}(op)
                        │
@@ -275,8 +261,3 @@ adjoint, so the only safe strategy is `PolicyRetry` on write-side effects.
                             │
                          re-enter
 ```
-
-The design is equivalent to a one-shot algebraic effect system with two effect constructors, a binary
-handler algebra, and a pluggable delimited continuation. It keeps the non-blocking I/O model compositional:
-callers choose their interpretation without modifying the engine, and the engine guarantees data integrity
-across all handler choices.

@@ -20,8 +20,8 @@ ErrWouldBlock ErrMore
 ```
 
 - `nil`: completion for this call
-- `ErrWouldBlock`: no progress on this attempt; retry via the owned wait policy
-- `ErrMore`: progress happened; the operation stays active
+- `ErrWouldBlock` means further progress requires readiness.
+- `ErrMore` means the operation remains active, even when the count is zero.
 - other error: real failure
 
 Review by this algebra:
