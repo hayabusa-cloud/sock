@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -282,6 +282,21 @@ var _ sock.Addr = addr      // Compatible net.Addr
 | linux/loong64 | Complet |
 | darwin/arm64 | Partiel |
 | freebsd/amd64 | Cross-compile uniquement |
+
+## Mesures de performance
+
+Sous Linux, `make bench` exécute chaque test dix fois avec `-cpu=1 -benchtime=200ms` et relève le temps d’exécution et les allocations mémoire. Pour lancer un seul test, utilisez son nom dans `make bench BENCH=UDPDelivery`.
+
+| Test | Ce que mesure une opération |
+|---|---|
+| `UnixSocketPair_ReadWrite` | Écrire cinq octets sur une paire de sockets Unix déjà connectée et les lire à l’autre extrémité. |
+| `UDPDelivery` | Envoyer un datagramme de 64 ou 1 200 octets sur la boucle locale IPv4 avec `sock` ou le paquet `net` de Go. Chaque réception vérifiée compte dans les `datagrams/s` et le débit utile en `MB/s`. |
+| `UDPBatch` | Comparer `SendMessages` et `RecvMessages` aux appels individuels à `WriteMsgUDP` et `ReadMsgUDP`. Une rafale comprend 1, 8 ou 32 datagrammes de 64 octets, ou 8 de 1 200 octets. `ns/datagram` donne le temps par datagramme livré, `datagrams/send-call` et `datagrams/recv-call` les livraisons par appel, et `allocs/op` les allocations pour toute la rafale. |
+| `StreamDelivery` | Comparer `sock` et `net` sur des flux TCP/IPv4 et Unix déjà établis. Pour 64 octets, `ns/op` inclut la vérification du contenu et la confirmation du récepteur. Pour 1 MiB, comparer le débit utile en `MB/s` avec des écritures de 4 KiB et de 64 KiB. Chaque lecture porte sur 64 KiB au plus et chaque octet est compté une seule fois. |
+| `WouldBlock` | Lire sur un flux Unix vide ou écrire dans une file de datagrammes Unix pleine. `ns/op` mesure un appel qui renvoie `iox.ErrWouldBlock`, via `sock.UnixConn` ou son descripteur emprunté `iofd.FD`. |
+| `TCPLifecycle` | Comparer `sock` et `net` sur la boucle locale IPv4. `listen` ouvre un socket, le lie à une adresse, le met en écoute et le ferme. `connect` réutilise le socket d’écoute et compte les `connections/s` après la connexion, l’acceptation, la vérification des adresses et la fermeture des deux extrémités. |
+
+Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 
 ## Licence
 
