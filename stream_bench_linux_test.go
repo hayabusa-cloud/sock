@@ -18,7 +18,7 @@ import (
 	"code.hybscloud.com/sock"
 )
 
-const streamTimeout = 10 * time.Second
+const benchmarkSocketTimeout = 10 * time.Second
 
 func BenchmarkStreamDelivery(b *testing.B) {
 	tcp := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}
@@ -29,7 +29,7 @@ func BenchmarkStreamDelivery(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		d := sock.TCPDialer{Timeout: streamTimeout}
+		d := sock.TCPDialer{Timeout: benchmarkSocketTimeout}
 		benchmarkStreamSizes(b, l, func() (*sock.TCPConn, error) {
 			return d.Dial4(nil, l.Addr().(*net.TCPAddr))
 		})
@@ -40,7 +40,7 @@ func BenchmarkStreamDelivery(b *testing.B) {
 			b.Fatal(err)
 		}
 		benchmarkStreamSizes(b, l, func() (net.Conn, error) {
-			return net.DialTimeout("tcp4", l.Addr().String(), streamTimeout)
+			return net.DialTimeout("tcp4", l.Addr().String(), benchmarkSocketTimeout)
 		})
 	})
 	b.Run("unix/impl=sock", func(b *testing.B) {
@@ -58,14 +58,14 @@ func BenchmarkStreamDelivery(b *testing.B) {
 			b.Fatal(err)
 		}
 		benchmarkStreamSizes(b, l, func() (net.Conn, error) {
-			return net.DialTimeout("unix", l.Addr().String(), streamTimeout)
+			return net.DialTimeout("unix", l.Addr().String(), benchmarkSocketTimeout)
 		})
 	})
 }
 
-func closeBenchmarkStream(b *testing.B, c io.Closer) {
+func closeBenchmarkSocket(b *testing.B, c io.Closer) {
 	if err := c.Close(); err != nil {
-		b.Error(err)
+		b.Fatal(err)
 	}
 }
 
@@ -74,22 +74,22 @@ func benchmarkStreamSizes[C net.Conn](b *testing.B, l interface {
 	SetDeadline(time.Time) error
 	Accept() (C, error)
 }, dial func() (C, error)) {
-	defer closeBenchmarkStream(b, l)
+	defer closeBenchmarkSocket(b, l)
 	for _, work := range []struct{ size, write int }{{64, 64}, {1 << 20, 4 << 10}, {1 << 20, 64 << 10}} {
 		b.Run(fmt.Sprintf("bytes=%d/write=%d", work.size, work.write), func(b *testing.B) {
-			if err := l.SetDeadline(time.Now().Add(streamTimeout)); err != nil {
+			if err := l.SetDeadline(time.Now().Add(benchmarkSocketTimeout)); err != nil {
 				b.Fatal(err)
 			}
 			sender, err := dial()
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer closeBenchmarkStream(b, sender)
+			defer closeBenchmarkSocket(b, sender)
 			receiver, err := l.Accept()
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer closeBenchmarkStream(b, receiver)
+			defer closeBenchmarkSocket(b, receiver)
 			if tcp, ok := net.Conn(sender).(interface{ SetNoDelay(bool) error }); ok {
 				if err := tcp.SetNoDelay(true); err != nil {
 					b.Fatal(err)
@@ -149,7 +149,7 @@ func benchmarkStreamDelivery(b *testing.B, sender, receiver net.Conn, size, writ
 
 	transfer := func(sequence uint64) {
 		if sequence%64 == 0 {
-			deadline := time.Now().Add(streamTimeout)
+			deadline := time.Now().Add(benchmarkSocketTimeout)
 			if err := sender.SetWriteDeadline(deadline); err != nil {
 				b.Fatal(err)
 			}

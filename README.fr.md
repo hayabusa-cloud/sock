@@ -285,13 +285,16 @@ var _ sock.Addr = addr      // Compatible net.Addr
 
 ## Mesures de performance
 
-Sous Linux, `make bench` exécute chaque benchmark dix fois avec `-cpu=1 -benchtime=200ms` et relève le temps d’exécution et les allocations mémoire. `make bench BENCH=UnixSocketPair_ReadWrite` mesure l’écriture de cinq octets suivie de leur lecture sur une paire de sockets Unix déjà créée.
+Sous Linux, `make bench` exécute chaque test dix fois avec `-cpu=1 -benchtime=200ms` et relève le temps d’exécution et les allocations mémoire. Pour lancer un seul test, utilisez son nom dans `make bench BENCH=UDPDelivery`.
 
-Pour comparer `sock` au paquet `net` de Go, exécutez `make bench BENCH=UDPDelivery`. Tous deux envoient des datagrammes de 64 et de 1 200 octets sur la boucle locale IPv4, un à la fois. Le récepteur vérifie chaque datagramme avant de le compter dans le débit en datagrammes (`datagrams/s`) et en octets utiles (`MB/s`).
-
-Exécutez `make bench BENCH=UDPBatch` pour comparer `SendMessages` et `RecvMessages` aux appels individuels à `WriteMsgUDP` et `ReadMsgUDP`. Les deux méthodes envoient des rafales de 1, 8 ou 32 datagrammes de 64 octets et de 8 datagrammes de 1 200 octets. `ns/datagram` donne le temps moyen par datagramme livré. `datagrams/send-call` et `datagrams/recv-call` donnent le nombre moyen de datagrammes livrés par appel d’envoi et de réception, et `allocs/op` compte les allocations par rafale complète.
-
-Exécutez `make bench BENCH=StreamDelivery` pour comparer `sock` et `net` sur des connexions TCP sur IPv4 et des sockets de flux Unix déjà établies. Pour 64 octets, `ns/op` inclut l’écriture et la confirmation du récepteur après vérification des données. Pour 1 MiB, comparez le débit utile en `MB/s` avec des écritures de 4 KiB et de 64 KiB. Dans les deux cas, chaque lecture porte sur 64 KiB au plus et chaque octet reçu est compté une seule fois.
+| Test | Ce que mesure une opération |
+|---|---|
+| `UnixSocketPair_ReadWrite` | Écrire cinq octets sur une paire de sockets Unix déjà connectée et les lire à l’autre extrémité. |
+| `UDPDelivery` | Envoyer un datagramme de 64 ou 1 200 octets sur la boucle locale IPv4 avec `sock` ou le paquet `net` de Go. Chaque réception vérifiée compte dans les `datagrams/s` et le débit utile en `MB/s`. |
+| `UDPBatch` | Comparer `SendMessages` et `RecvMessages` aux appels individuels à `WriteMsgUDP` et `ReadMsgUDP`. Une rafale comprend 1, 8 ou 32 datagrammes de 64 octets, ou 8 de 1 200 octets. `ns/datagram` donne le temps par datagramme livré, `datagrams/send-call` et `datagrams/recv-call` les livraisons par appel, et `allocs/op` les allocations pour toute la rafale. |
+| `StreamDelivery` | Comparer `sock` et `net` sur des flux TCP/IPv4 et Unix déjà établis. Pour 64 octets, `ns/op` inclut la vérification du contenu et la confirmation du récepteur. Pour 1 MiB, comparer le débit utile en `MB/s` avec des écritures de 4 KiB et de 64 KiB. Chaque lecture porte sur 64 KiB au plus et chaque octet est compté une seule fois. |
+| `WouldBlock` | Lire sur un flux Unix vide ou écrire dans une file de datagrammes Unix pleine. `ns/op` mesure un appel qui renvoie `iox.ErrWouldBlock`, via `sock.UnixConn` ou son descripteur emprunté `iofd.FD`. |
+| `TCPLifecycle` | Comparer `sock` et `net` sur la boucle locale IPv4. `listen` ouvre un socket, le lie à une adresse, le met en écoute et le ferme. `connect` réutilise le socket d’écoute et compte les `connections/s` après la connexion, l’acceptation, la vérification des adresses et la fermeture des deux extrémités. |
 
 Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 

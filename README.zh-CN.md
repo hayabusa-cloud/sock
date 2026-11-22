@@ -284,13 +284,16 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 
 ## 基准测试
 
-在 Linux 上，`make bench` 使用 `-cpu=1 -benchtime=200ms` 将每项基准测试运行十次，记录耗时和内存分配情况。`make bench BENCH=UnixSocketPair_ReadWrite` 测量在已创建的 Unix 套接字对上写入五个字节并读回这五个字节的耗时。
+在 Linux 上，`make bench` 使用 `-cpu=1 -benchtime=200ms` 将每项基准测试运行十次，记录耗时和内存分配情况。要单独运行一项，可将 `make bench BENCH=UDPDelivery` 中的 `UDPDelivery` 换成表中的名称。
 
-运行 `make bench BENCH=UDPDelivery` 可比较 `sock` 和 Go 标准库 `net`。两者都在 IPv4 环回接口上逐个发送 64 字节和 1,200 字节的数据报。接收端逐个校验，随后统计每秒收到的数据报数（`datagrams/s`）和有效载荷吞吐量（`MB/s`）。
-
-运行 `make bench BENCH=UDPBatch` 可比较批量调用 `SendMessages`、`RecvMessages` 与逐个调用 `WriteMsgUDP`、`ReadMsgUDP`。两种方式每轮发送 1、8 或 32 个 64 字节数据报，或 8 个 1,200 字节数据报。`ns/datagram` 表示每个已交付数据报的平均耗时，`datagrams/send-call` 和 `datagrams/recv-call` 表示每次发送和接收调用平均交付的数据报数，`allocs/op` 表示每轮收发的内存分配次数。
-
-运行 `make bench BENCH=StreamDelivery` 可在已建立的 IPv4 TCP 和 Unix 域流连接上比较 `sock` 与 `net`。传输 64 字节时，`ns/op` 包含写入以及接收方校验数据后发回确认的时间。传输 1 MiB 时，可比较每次写入 4 KiB 和 64 KiB 时的有效载荷吞吐量（`MB/s`）。两种情况下每次最多读取 64 KiB，每个已交付的字节只计一次。
+| 基准测试 | 一次操作测量什么 |
+|---|---|
+| `UnixSocketPair_ReadWrite` | 在已连接的 Unix 套接字对的一端写入 5 字节，从另一端读出。 |
+| `UDPDelivery` | 用 `sock` 或 Go 的 `net` 通过 IPv4 回环接口发送一个 64 或 1,200 字节的数据报。接收方校验后才计入 `datagrams/s` 和有效载荷吞吐量 `MB/s`。 |
+| `UDPBatch` | 比较批量调用 `SendMessages`、`RecvMessages` 与逐个调用 `WriteMsgUDP`、`ReadMsgUDP`。每轮发送 1、8 或 32 个 64 字节数据报，或 8 个 1,200 字节数据报。`ns/datagram` 是每个已交付数据报的平均耗时，`datagrams/send-call` 和 `datagrams/recv-call` 是每次调用平均交付的个数，`allocs/op` 是整轮的内存分配次数。 |
+| `StreamDelivery` | 在已连接的 IPv4 TCP 和 Unix 域流套接字上比较 `sock` 与 `net`。传输 64 字节时，`ns/op` 计时到接收方校验数据并通知完成为止。传输 1 MiB 时，比较每次写入 4 KiB 和 64 KiB 时的有效载荷吞吐量 `MB/s`。每次最多读取 64 KiB，每个字节只计一次。 |
+| `WouldBlock` | 从空的 Unix 流中读取，或向已满的 Unix 数据报队列写入。`ns/op` 衡量通过 `sock.UnixConn` 或从中借用的 `iofd.FD` 调用一次并返回 `iox.ErrWouldBlock` 所需的时间。 |
+| `TCPLifecycle` | 在 IPv4 回环接口上比较 `sock` 与 `net`。`listen` 测量创建、绑定、监听并关闭套接字的耗时。`connect` 复用监听套接字，在连接、接受连接、核对两端地址并关闭两端后，才将该连接计入 `connections/s`。 |
 
 比较不同版本时，在同一台机器上使用相同的内核和 Go 版本，分别保存输出，再运行 `benchstat before.txt after.txt`。Benchmarks 工作流在作业摘要中列出原始数据，并提供下载。
 

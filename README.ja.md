@@ -284,13 +284,16 @@ var _ sock.Addr = addr      // net.Addr互換
 
 ## ベンチマーク
 
-Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ベンチマークの処理時間とメモリ割り当てを 10 回ずつ計測します。`make bench BENCH=UnixSocketPair_ReadWrite` は、作成済みの Unix ソケットペアで 5 バイトを書き込み、読み戻すまでの時間を計測します。
+Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ケースの処理時間とメモリ割り当てを 10 回ずつ計測します。個別に実行するには、`make bench BENCH=UDPDelivery` の `BENCH` に表の名前を指定します。
 
-`make bench BENCH=UDPDelivery` で、`sock` と Go 標準ライブラリの `net` を比較できます。どちらも IPv4 ループバックで 64 バイトと 1,200 バイトのデータグラムを 1 個ずつ送ります。受信側で各データグラムを検証し、毎秒の受信数（`datagrams/s`）とペイロードのスループット（`MB/s`）を集計します。
-
-`make bench BENCH=UDPBatch` で、`SendMessages` と `RecvMessages` による一括処理を、`WriteMsgUDP` と `ReadMsgUDP` による 1 個ずつの処理と比較できます。1 回に送るのは 64 バイトのデータグラム 1 個、8 個、32 個、または 1,200 バイトのデータグラム 8 個です。`ns/datagram` は受信したデータグラム 1 個あたりの平均時間、`datagrams/send-call` と `datagrams/recv-call` は送信・受信の呼び出し 1 回あたりの平均個数、`allocs/op` は一連の送受信に要したメモリ割り当て回数を示します。
-
-`make bench BENCH=StreamDelivery` で、接続済みの IPv4 TCP ストリームと Unix ドメインストリーム上で `sock` と `net` を比較できます。64 バイトの場合、`ns/op` は書き込みから、受信側が内容を検証して完了を通知するまでの時間です。1 MiB の場合は、4 KiB ずつ書く場合と 64 KiB ずつ書く場合のペイロードの転送速度（`MB/s`）を比較します。どちらも 1 回に最大 64 KiB を読み取り、受信したバイトを一度だけ数えます。
+| ベンチマーク | 1 回の操作で測るもの |
+|---|---|
+| `UnixSocketPair_ReadWrite` | 接続済みの Unix ソケットペアの一方に 5 バイトを書き込み、もう一方で読み取ります。 |
+| `UDPDelivery` | `sock` または Go の `net` で、IPv4 ループバックに 64 バイトまたは 1,200 バイトのデータグラムを 1 個送ります。受信側で検証を終えたものを `datagrams/s` とペイロードの `MB/s` に数えます。 |
+| `UDPBatch` | `SendMessages` と `RecvMessages` による一括処理を、`WriteMsgUDP` と `ReadMsgUDP` による個別処理と比較します。1 回に送るのは 64 バイトのデータグラム 1 個、8 個、32 個、または 1,200 バイトのもの 8 個です。`ns/datagram` は受信 1 個あたりの時間、`datagrams/send-call` と `datagrams/recv-call` は各呼び出しあたりの個数、`allocs/op` は一連の送受信のメモリ割り当て回数です。 |
+| `StreamDelivery` | 接続済みの IPv4 TCP ストリームと Unix ドメインストリームで `sock` と `net` を比較します。64 バイトの `ns/op` は受信側が内容を検証して完了を通知するまでの時間です。1 MiB では 4 KiB ずつ書く場合と 64 KiB ずつ書く場合のペイロードの `MB/s` を比較します。1 回に最大 64 KiB を読み取り、各バイトを一度だけ数えます。 |
+| `WouldBlock` | 空の Unix ストリームからの読み取り、または満杯の Unix データグラムキューへの書き込みを行います。`ns/op` は `sock.UnixConn` またはそこから借用した `iofd.FD` の呼び出しが `iox.ErrWouldBlock` を返すまでの時間です。 |
+| `TCPLifecycle` | IPv4 ループバックで `sock` と `net` を比較します。`listen` はソケットの作成、バインド、待ち受け、クローズを測ります。`connect` はリスナーを再利用し、接続、受け入れ、両端のアドレスの照合、両端のクローズまで終えた接続を `connections/s` に数えます。 |
 
 リビジョンを比較するには、同じマシンでカーネルと Go のバージョンをそろえてそれぞれの出力を保存し、`benchstat before.txt after.txt` を実行します。Benchmarks ワークフローは各回の測定結果をジョブのサマリーに掲載し、ダウンロード用のファイルにも保存します。
 
