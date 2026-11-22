@@ -372,8 +372,13 @@ func TestUnixPacketRecords(t *testing.T) {
 func checkUnixPacketRecords(t *testing.T, sender, receiver Socket) {
 	t.Helper()
 	var buf [1]byte
-	if n, err := receiver.Read(nil); n != 0 || err != iox.ErrWouldBlock {
-		t.Errorf("Read(nil) on empty queue = (%d, %v)", n, err)
+	if n, err := receiver.Read(buf[:]); n != 0 || err != iox.ErrWouldBlock {
+		t.Fatalf("Read on empty queue = (%d, %v)", n, err)
+	}
+	if runtime.GOOS == "linux" {
+		if n, err := receiver.Read(nil); n != 0 || err != iox.ErrWouldBlock {
+			t.Fatalf("Read(nil) on empty queue = (%d, %v)", n, err)
+		}
 	}
 	if n, err := sender.Write(nil); n != 0 || err != nil {
 		t.Fatalf("Write(nil) = (%d, %v)", n, err)
