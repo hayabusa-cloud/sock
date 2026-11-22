@@ -71,7 +71,7 @@ func (s *RawSocket) RecvFrom(buf []byte) (int, *IPAddr, error) {
 		unsafe.Pointer(&rsaLen),
 	)
 	if errno != 0 {
-		return int(n), nil, errFromErrno(errno)
+		return 0, nil, errFromErrno(errno)
 	}
 	addr := decodeIPAddr(&rsa)
 	return int(n), addr, nil
@@ -95,7 +95,7 @@ func (s *RawSocket) SendTo(buf []byte, addr *IPAddr) (int, error) {
 	ptr, length := sa.Raw()
 	n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }

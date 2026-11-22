@@ -89,7 +89,7 @@ func (c *UDPConn) SendMessages(msgs []UDPMessage) (int, error) {
 
 	n, errno := zcall.Sendmmsg(uintptr(raw), unsafe.Pointer(&mmsghdrs[0]), uintptr(len(msgs)), 0)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 
 	// Update N field for each sent message
@@ -151,7 +151,7 @@ func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 
 	n, errno := zcall.Recvmmsg(uintptr(raw), unsafe.Pointer(&mmsghdrs[0]), uintptr(len(msgs)), zcall.MSG_DONTWAIT, nil)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 
 	// Update fields for each received message

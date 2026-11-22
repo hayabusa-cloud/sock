@@ -11,9 +11,29 @@ import (
 	"testing"
 	"time"
 
+	"code.hybscloud.com/iox"
 	"code.hybscloud.com/sock"
 	"code.hybscloud.com/zcall"
 )
+
+func TestRawDatagramErrorCounts(t *testing.T) {
+	addr := &sock.IPAddr{IP: sock.IPv4LoopBack}
+	// Use a separate protocol for the empty read on loopback.
+	conn, err := sock.ListenRaw4(addr, 253)
+	if err == sock.ErrPermission {
+		t.Skip("CAP_NET_RAW required")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if n, _, err := conn.RecvFrom(make([]byte, 1)); n != 0 || err != iox.ErrWouldBlock {
+		t.Errorf("RecvFrom on empty socket = (%d, %v)", n, err)
+	}
+	if n, err := conn.SendTo(make([]byte, 1<<16), addr); n != 0 || err != sock.ErrMessageTooLarge {
+		t.Errorf("SendTo oversized packet = (%d, %v)", n, err)
+	}
+}
 
 func TestRawSocket_ReadWrite(t *testing.T) {
 	t.Skip("ICMP loopback unreliable on some kernels; covered by coverage_test.go")

@@ -70,7 +70,7 @@ func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
 	rsaLen := uint32(SizeofSockaddrAny)
 	n, errno := zcall.Recvfrom(uintptr(raw), buf, 0, unsafe.Pointer(&rsa), unsafe.Pointer(&rsaLen))
 	if errno != 0 {
-		return int(n), nil, errFromErrno(errno)
+		return 0, nil, errFromErrno(errno)
 	}
 	return int(n), decodeUDPAddr(&rsa), nil
 }
@@ -92,7 +92,7 @@ func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
 	ptr, length := sa.Raw()
 	n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 	return int(n), nil
 }

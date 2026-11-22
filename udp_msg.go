@@ -57,7 +57,7 @@ func (c *UDPConn) readMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 
 	rn, errno := zcall.Recvmsg(uintptr(raw), unsafe.Pointer(&msg), 0)
 	if errno != 0 {
-		return int(rn), 0, 0, nil, errFromErrno(errno)
+		return 0, 0, 0, nil, errFromErrno(errno)
 	}
 
 	return int(rn), int(msg.Controllen), int(msg.Flags), decodeUDPAddr(&rsa), nil
@@ -119,7 +119,7 @@ func (c *UDPConn) writeMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err er
 
 	wn, errno := zcall.Sendmsg(uintptr(raw), unsafe.Pointer(&msg), 0)
 	if errno != 0 {
-		return int(wn), 0, errFromErrno(errno)
+		return 0, 0, errFromErrno(errno)
 	}
 
 	return int(wn), len(oob), nil

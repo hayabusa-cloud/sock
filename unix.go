@@ -166,7 +166,7 @@ func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
 			unsafe.Pointer(&rsaLen),
 		)
 		if errno != 0 {
-			return int(rn), errFromErrno(errno)
+			return 0, errFromErrno(errno)
 		}
 		addr = decodeUnixAddr(&rsa, rsaLen, unixSocketNetwork(c.typ))
 		return int(rn), nil
@@ -194,7 +194,7 @@ func (c *UnixConn) WriteTo(buf []byte, addr Addr) (int, error) {
 		ptr, length := sa.Raw()
 		n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
 		if errno != 0 {
-			return int(n), errFromErrno(errno)
+			return 0, errFromErrno(errno)
 		}
 		return int(n), nil
 	}, &c.deadline)
