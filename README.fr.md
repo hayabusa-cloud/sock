@@ -289,6 +289,8 @@ Sous Linux, `make bench` exécute chaque benchmark dix fois avec `-cpu=1 -bencht
 
 Pour comparer `sock` au paquet `net` de Go, exécutez `make bench BENCH=UDPDelivery`. Tous deux envoient des datagrammes de 64 et de 1 200 octets sur la boucle locale IPv4, un à la fois. Le récepteur vérifie chaque datagramme avant de le compter dans le débit en datagrammes (`datagrams/s`) et en octets utiles (`MB/s`).
 
+Exécutez `make bench BENCH=UDPBatch` pour comparer `SendMessages` et `RecvMessages` aux appels individuels à `WriteMsgUDP` et `ReadMsgUDP`. Les deux méthodes envoient des rafales de 1, 8 ou 32 datagrammes de 64 octets et de 8 datagrammes de 1 200 octets. `ns/datagram` donne le temps moyen par datagramme livré. `datagrams/send-call` et `datagrams/recv-call` donnent le nombre moyen de datagrammes livrés par appel d’envoi et de réception, et `allocs/op` compte les allocations par rafale complète.
+
 Pour comparer deux révisions, enregistrez les résultats de chacune sur la même machine avec les mêmes versions du noyau et de Go, puis exécutez `benchstat before.txt after.txt`. Le workflow Benchmarks publie les mesures brutes dans le résumé du job et dans un fichier téléchargeable.
 
 ## Licence

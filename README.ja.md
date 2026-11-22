@@ -288,6 +288,8 @@ Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ベ�
 
 `make bench BENCH=UDPDelivery` で、`sock` と Go 標準ライブラリの `net` を比較できます。どちらも IPv4 ループバックで 64 バイトと 1,200 バイトのデータグラムを 1 個ずつ送ります。受信側で各データグラムを検証し、毎秒の受信数（`datagrams/s`）とペイロードのスループット（`MB/s`）を集計します。
 
+`make bench BENCH=UDPBatch` で、`SendMessages` と `RecvMessages` による一括処理を、`WriteMsgUDP` と `ReadMsgUDP` による 1 個ずつの処理と比較できます。1 回に送るのは 64 バイトのデータグラム 1 個、8 個、32 個、または 1,200 バイトのデータグラム 8 個です。`ns/datagram` は受信したデータグラム 1 個あたりの平均時間、`datagrams/send-call` と `datagrams/recv-call` は送信・受信の呼び出し 1 回あたりの平均個数、`allocs/op` は一連の送受信に要したメモリ割り当て回数を示します。
+
 リビジョンを比較するには、同じマシンでカーネルと Go のバージョンをそろえてそれぞれの出力を保存し、`benchstat before.txt after.txt` を実行します。Benchmarks ワークフローは各回の測定結果をジョブのサマリーに掲載し、ダウンロード用のファイルにも保存します。
 
 ## ライセンス

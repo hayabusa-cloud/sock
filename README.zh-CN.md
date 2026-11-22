@@ -288,6 +288,8 @@ var _ sock.Addr = addr      // 兼容 net.Addr
 
 运行 `make bench BENCH=UDPDelivery` 可比较 `sock` 和 Go 标准库 `net`。两者都在 IPv4 环回接口上逐个发送 64 字节和 1,200 字节的数据报。接收端逐个校验，随后统计每秒收到的数据报数（`datagrams/s`）和有效载荷吞吐量（`MB/s`）。
 
+运行 `make bench BENCH=UDPBatch` 可比较批量调用 `SendMessages`、`RecvMessages` 与逐个调用 `WriteMsgUDP`、`ReadMsgUDP`。两种方式每轮发送 1、8 或 32 个 64 字节数据报，或 8 个 1,200 字节数据报。`ns/datagram` 表示每个已交付数据报的平均耗时，`datagrams/send-call` 和 `datagrams/recv-call` 表示每次发送和接收调用平均交付的数据报数，`allocs/op` 表示每轮收发的内存分配次数。
+
 比较不同版本时，在同一台机器上使用相同的内核和 Go 版本，分别保存输出，再运行 `benchstat before.txt after.txt`。Benchmarks 工作流在作业摘要中列出原始数据，并提供下载。
 
 ## 许可证

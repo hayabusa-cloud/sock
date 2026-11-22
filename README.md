@@ -290,6 +290,8 @@ On Linux, `make bench` runs each benchmark ten times with `-cpu=1 -benchtime=200
 
 To compare `sock` with Go’s `net` package, run `make bench BENCH=UDPDelivery`. Each sends 64-byte and 1,200-byte datagrams over IPv4 loopback, one at a time. The receiver checks each datagram before it counts toward `datagrams/s` and payload `MB/s`.
 
+Run `make bench BENCH=UDPBatch` to compare `SendMessages` and `RecvMessages` with scalar `WriteMsgUDP` and `ReadMsgUDP` calls. Both send bursts of 1, 8, or 32 datagrams at 64 bytes, and 8 at 1,200 bytes. `ns/datagram` averages the time per delivered datagram. `datagrams/send-call` and `datagrams/recv-call` count deliveries per API call, and `allocs/op` covers one complete burst.
+
 To compare revisions, save the output from each on the same machine with the same kernel and Go version, then run `benchstat before.txt after.txt`. The Benchmarks workflow publishes the raw samples in its job summary and as a downloadable artifact.
 
 ## License

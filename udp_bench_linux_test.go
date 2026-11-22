@@ -33,21 +33,23 @@ func BenchmarkUDPDelivery(b *testing.B) {
 	}
 }
 
-func benchmarkUDPDelivery(b *testing.B, size int, listen func() (net.PacketConn, error)) {
-	open := func() net.PacketConn {
-		b.Helper()
-		conn, err := listen()
-		if err != nil {
-			b.Fatal(err)
-		}
-		b.Cleanup(func() {
-			if err := conn.Close(); err != nil {
-				b.Error(err)
-			}
-		})
-		return conn
+func openBenchmarkUDP[T net.PacketConn](b *testing.B, listen func() (T, error)) T {
+	b.Helper()
+	conn, err := listen()
+	if err != nil {
+		b.Fatal(err)
 	}
-	sender, receiver := open(), open()
+	b.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			b.Error(err)
+		}
+	})
+	return conn
+}
+
+func benchmarkUDPDelivery(b *testing.B, size int, listen func() (net.PacketConn, error)) {
+	sender := openBenchmarkUDP(b, listen)
+	receiver := openBenchmarkUDP(b, listen)
 	source := sender.LocalAddr().(*net.UDPAddr)
 	target := receiver.LocalAddr()
 	payload := make([]byte, size)
