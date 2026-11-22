@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -281,6 +281,21 @@ var _ sock.Addr = addr      // net.Addr互換
 | linux/loong64 | フル |
 | darwin/arm64 | 部分的 |
 | freebsd/amd64 | クロスコンパイルのみ |
+
+## ベンチマーク
+
+Linux で `make bench` を実行すると、`-cpu=1 -benchtime=200ms` で各ケースの処理時間とメモリ割り当てを 10 回ずつ計測します。個別に実行するには、`make bench BENCH=UDPDelivery` の `BENCH` に表の名前を指定します。
+
+| ベンチマーク | 1 回の操作で測るもの |
+|---|---|
+| `UnixSocketPair_ReadWrite` | 接続済みの Unix ソケットペアの一方に 5 バイトを書き込み、もう一方で読み取ります。 |
+| `UDPDelivery` | `sock` または Go の `net` で、IPv4 ループバックに 64 バイトまたは 1,200 バイトのデータグラムを 1 個送ります。受信側で検証を終えたものを `datagrams/s` とペイロードの `MB/s` に数えます。 |
+| `UDPBatch` | `SendMessages` と `RecvMessages` による一括処理を、`WriteMsgUDP` と `ReadMsgUDP` による個別処理と比較します。1 回に送るのは 64 バイトのデータグラム 1 個、8 個、32 個、または 1,200 バイトのもの 8 個です。`ns/datagram` は受信 1 個あたりの時間、`datagrams/send-call` と `datagrams/recv-call` は各呼び出しあたりの個数、`allocs/op` は一連の送受信のメモリ割り当て回数です。 |
+| `StreamDelivery` | 接続済みの IPv4 TCP ストリームと Unix ドメインストリームで `sock` と `net` を比較します。64 バイトの `ns/op` は受信側が内容を検証して完了を通知するまでの時間です。1 MiB では 4 KiB ずつ書く場合と 64 KiB ずつ書く場合のペイロードの `MB/s` を比較します。1 回に最大 64 KiB を読み取り、各バイトを一度だけ数えます。 |
+| `WouldBlock` | 空の Unix ストリームからの読み取り、または満杯の Unix データグラムキューへの書き込みを行います。`ns/op` は `sock.UnixConn` またはそこから借用した `iofd.FD` の呼び出しが `iox.ErrWouldBlock` を返すまでの時間です。 |
+| `TCPLifecycle` | IPv4 ループバックで `sock` と `net` を比較します。`listen` はソケットの作成、バインド、待ち受け、クローズを測ります。`connect` はリスナーを再利用し、接続、受け入れ、両端のアドレスの照合、両端のクローズまで終えた接続を `connections/s` に数えます。 |
+
+リビジョンを比較するには、同じマシンでカーネルと Go のバージョンをそろえてそれぞれの出力を保存し、`benchstat before.txt after.txt` を実行します。Benchmarks ワークフローは各回の測定結果をジョブのサマリーに掲載し、ダウンロード用のファイルにも保存します。
 
 ## ライセンス
 

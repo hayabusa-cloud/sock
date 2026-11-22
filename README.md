@@ -1,7 +1,7 @@
 # sock
 
 [![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/sock.svg)](https://pkg.go.dev/code.hybscloud.com/sock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/sock)](https://goreportcard.com/report/github.com/hayabusa-cloud/sock)
+[![Benchmarks](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/sock/actions/workflows/benchmarks.yml)
 [![Codecov](https://codecov.io/gh/hayabusa-cloud/sock/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/sock)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -283,6 +283,21 @@ var _ sock.Addr = addr      // net.Addr compatible
 | linux/loong64 | Full |
 | darwin/arm64 | Partial |
 | freebsd/amd64 | Cross-compile only |
+
+## Benchmarks
+
+On Linux, `make bench` runs each case ten times with `-cpu=1 -benchtime=200ms` and reports time and allocations. To run one workload, use its name in `make bench BENCH=UDPDelivery`.
+
+| Workload | What one operation measures |
+|---|---|
+| `UnixSocketPair_ReadWrite` | Write five bytes on an established Unix socket pair and read them back. |
+| `UDPDelivery` | Send one 64-byte or 1,200-byte datagram over IPv4 loopback with `sock` or Go’s `net`. Each verified receive counts toward `datagrams/s` and payload `MB/s`. |
+| `UDPBatch` | Compare `SendMessages` and `RecvMessages` with scalar `WriteMsgUDP` and `ReadMsgUDP`. A burst contains 1, 8, or 32 datagrams of 64 bytes, or 8 of 1,200 bytes. `ns/datagram` measures time per delivery, `datagrams/send-call` and `datagrams/recv-call` count deliveries per call, and `allocs/op` covers the whole burst. |
+| `StreamDelivery` | Compare `sock` and `net` on established IPv4 TCP and Unix streams. For 64 bytes, `ns/op` runs through the reader’s payload check and acknowledgment. For 1 MiB, compare payload `MB/s` with 4 KiB and 64 KiB writes. Reads are capped at 64 KiB and each byte counts once. |
+| `WouldBlock` | Read an empty Unix stream or write to a full Unix datagram queue. `ns/op` measures one call returning `iox.ErrWouldBlock`, through either `sock.UnixConn` or its borrowed `iofd.FD`. |
+| `TCPLifecycle` | Compare `sock` and `net` on IPv4 loopback. `listen` opens, binds, listens, and closes. `connect` reuses a listener and counts `connections/s` after dial, accept, verification of both peer addresses, and close at both ends. |
+
+To compare revisions, save the output from each on the same machine with the same kernel and Go version, then run `benchstat before.txt after.txt`. The Benchmarks workflow publishes the raw samples in its job summary and as a downloadable artifact.
 
 ## License
 
