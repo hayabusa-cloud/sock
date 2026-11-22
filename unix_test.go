@@ -290,65 +290,6 @@ func TestDialUnix(t *testing.T) {
 	})
 }
 
-func TestDialUnixTreatsWouldBlockAsPending(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("AF_UNIX backlog-pressure ErrWouldBlock is Linux-specific")
-	}
-
-	addr := uniqAddr("dial-pending", "unix")
-
-	server, err := NewUnixStreamSocket()
-	if err != nil {
-		t.Fatalf("NewUnixStreamSocket: %v", err)
-	}
-	defer server.Close()
-
-	if err := server.Bind(unixAddrToSockaddr(addr)); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	if err := server.Listen(1); err != nil {
-		t.Fatalf("Listen: %v", err)
-	}
-
-	var held []*UnixSocket
-	defer func() {
-		for _, client := range held {
-			client.Close()
-		}
-	}()
-
-	sawWouldBlock := false
-	for range 256 {
-		client, err := NewUnixStreamSocket()
-		if err != nil {
-			t.Fatalf("NewUnixStreamSocket client: %v", err)
-		}
-		err = client.Connect(unixAddrToSockaddr(addr))
-		switch err {
-		case nil, ErrInProgress:
-			held = append(held, client)
-		case iox.ErrWouldBlock:
-			held = append(held, client)
-			sawWouldBlock = true
-			goto pendingConnect
-		default:
-			client.Close()
-			t.Fatalf("client.Connect: %v", err)
-		}
-	}
-
-pendingConnect:
-	if !sawWouldBlock {
-		t.Skip("kernel did not surface AF_UNIX ErrWouldBlock under backlog pressure")
-	}
-
-	conn, err := DialUnix("unix", nil, addr)
-	if err != nil {
-		t.Fatalf("DialUnix should treat AF_UNIX ErrWouldBlock as pending, got %v", err)
-	}
-	defer conn.Close()
-}
-
 func TestUnixConnPairVariants(t *testing.T) {
 	t.Run("unknown_network", func(t *testing.T) {
 		_, err := UnixConnPair("invalid")

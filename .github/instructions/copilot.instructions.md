@@ -124,9 +124,9 @@ Returns: 0 (success), EISCONN (already connected), or actual error
 
 **Kernel behavior (af_inet.c)**: Second connect() on TCP_CLOSE calls `sock_error()` which atomically returns AND clears `sk_err`. The SO_ERROR path is effectively dead code.
 
-**Linux AF_UNIX note**: a pending non-blocking Unix-domain `connect(2)` may
-surface as `EAGAIN` / `EWOULDBLOCK` (`iox.ErrWouldBlock`), not only
-`EINPROGRESS`. Treat that as pending control flow, not a hard failure.
+On Linux, `DialUnix` returns `(nil, iox.ErrWouldBlock)` when a stream or
+sequenced-packet listener's accept queue is full. Retry the dial after the
+listener accepts a connection.
 
 ### Error Semantics
 

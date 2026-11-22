@@ -14,7 +14,6 @@ import (
 	"time"
 	"unsafe"
 
-	"code.hybscloud.com/iox"
 	"code.hybscloud.com/zcall"
 )
 
@@ -320,14 +319,12 @@ func ListenUnixgram(network string, laddr *UnixAddr) (*UnixConn, error) {
 	return &UnixConn{UnixSocket: sock, laddr: actualLaddr, raddr: nil}, nil
 }
 
-// DialUnix initiates a non-blocking connection to a Unix domain socket.
-//
-// Unlike blocking dialers, this function returns immediately once the connection
-// attempt starts. The handshake may still be in progress when this function
-// returns (ErrInProgress is silently ignored; Linux AF_UNIX may surface the
-// same pending state as iox.ErrWouldBlock / EAGAIN).
-//
-// network must be "unix", "unixgram", or "unixpacket".
+// DialUnix starts a non-blocking connection on "unix", "unixgram", or "unixpacket".
+// If the kernel starts an asynchronous connect, the handshake may still be
+// in progress on return. On Linux, a full stream or sequenced-packet accept
+// queue makes DialUnix return (nil, iox.ErrWouldBlock). Retry the dial after
+// the listener accepts a connection. To keep a local pathname bound across
+// retries, bind a UnixSocket and retry Connect on that socket.
 func DialUnix(network string, laddr, raddr *UnixAddr) (*UnixConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
@@ -355,7 +352,7 @@ func DialUnix(network string, laddr, raddr *UnixAddr) (*UnixConn, error) {
 		}
 	}
 	sa := unixAddrToSockaddr(raddr)
-	if err := sock.Connect(sa); err != nil && err != ErrInProgress && err != iox.ErrWouldBlock {
+	if err := sock.Connect(sa); err != nil && err != ErrInProgress {
 		sock.Close()
 		return nil, err
 	}
