@@ -124,10 +124,11 @@ func (c *UnixConn) SetWriteDeadline(t time.Time) error {
 // Read reads data from the connection with adaptive I/O.
 // If no deadline is set, returns immediately with iox.ErrWouldBlock if not ready.
 // For stream sockets (SOCK_STREAM), returns io.EOF on connection close.
-// For datagram and seqpacket sockets, (0, nil) indicates an empty message.
+// For datagram and seqpacket sockets, an empty p discards one queued message.
+// Receiving an empty message returns (0, nil).
 func (c *UnixConn) Read(p []byte) (int, error) {
 	n, err := adaptiveRead(func() (int, error) {
-		return c.fd.Read(p)
+		return c.NetSocket.Read(p)
 	}, &c.deadline)
 	// Convert (0, nil) to (0, io.EOF) for stream protocols
 	if n == 0 && err == nil && c.Protocol() == UnderlyingProtocolStream {
@@ -138,9 +139,10 @@ func (c *UnixConn) Read(p []byte) (int, error) {
 
 // Write writes data to the connection with adaptive I/O.
 // If no deadline is set, returns immediately with iox.ErrWouldBlock if not ready.
+// On datagram and seqpacket sockets, an empty p sends an empty message.
 func (c *UnixConn) Write(p []byte) (int, error) {
 	return adaptiveWrite(func() (int, error) {
-		return c.fd.Write(p)
+		return c.NetSocket.Write(p)
 	}, &c.deadline)
 }
 
@@ -148,29 +150,16 @@ func (c *UnixConn) Write(p []byte) (int, error) {
 // A datagram from an unnamed sender has a nil source address.
 // For unconnected sockets. If no deadline is set, returns immediately with iox.ErrWouldBlock.
 func (c *UnixConn) ReadFrom(buf []byte) (int, Addr, error) {
-	var n int
 	var addr *UnixAddr
-	var err error
-
-	n, err = adaptiveRead(func() (int, error) {
-		raw := c.fd.Raw()
-		if raw < 0 {
-			return 0, ErrClosed
-		}
+	n, err := adaptiveRead(func() (int, error) {
 		var rsa RawSockaddrAny
 		rsaLen := uint32(SizeofSockaddrAny)
-		rn, errno := zcall.Recvfrom(
-			uintptr(raw),
-			buf,
-			0,
-			unsafe.Pointer(&rsa),
-			unsafe.Pointer(&rsaLen),
-		)
-		if errno != 0 {
-			return 0, errFromErrno(errno)
+		n, err := c.recvFrom(buf, unsafe.Pointer(&rsa), &rsaLen)
+		if err != nil {
+			return 0, err
 		}
 		addr = decodeUnixAddr(&rsa, rsaLen, unixSocketNetwork(c.typ))
-		return int(rn), nil
+		return n, nil
 	}, &c.deadline)
 	if addr == nil || addr.Name == "" {
 		return n, nil, err
@@ -195,11 +184,7 @@ func (c *UnixConn) WriteTo(buf []byte, addr Addr) (int, error) {
 		}
 		sa := unixAddrToSockaddr(unixAddr)
 		ptr, length := sa.Raw()
-		n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
-		if errno != 0 {
-			return 0, errFromErrno(errno)
-		}
-		return int(n), nil
+		return socketIOResult(zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length)))
 	}, &c.deadline)
 }
 

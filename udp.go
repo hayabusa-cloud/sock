@@ -63,62 +63,40 @@ func (s *UDPSocket) Protocol() UnderlyingProtocol { return UnderlyingProtocolDgr
 
 // Read receives one datagram and discards any bytes that do not fit in buf.
 func (s *UDPSocket) Read(buf []byte) (int, error) {
-	return s.recvDatagram(buf, nil, nil)
+	return s.recvFrom(buf, nil, nil)
 }
 
 func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
 	var rsa RawSockaddrInet6
 	rsaLen := uint32(SizeofSockaddrInet6)
-	n, err := s.recvDatagram(buf, &rsa, &rsaLen)
+	n, err := s.recvFrom(buf, unsafe.Pointer(&rsa), &rsaLen)
 	if err != nil {
 		return 0, nil, err
 	}
 	return n, decodeUDPAddr(&rsa), nil
 }
 
-func (s *UDPSocket) recvDatagram(buf []byte, addr *RawSockaddrInet6, addrLen *uint32) (int, error) {
-	raw := s.fd.Raw()
-	if raw < 0 {
-		return 0, ErrClosed
-	}
-	n, errno := zcall.Recvfrom(uintptr(raw), buf, 0, unsafe.Pointer(addr), unsafe.Pointer(addrLen))
-	if errno != 0 {
-		return 0, errFromErrno(errno)
-	}
-	return int(n), nil
-}
-
 // Write sends one datagram to the connected peer, including an empty datagram.
 func (s *UDPSocket) Write(buf []byte) (int, error) {
-	return s.sendDatagram(buf, nil)
+	return s.sendConnected(buf)
 }
 
 func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
 	if addr == nil {
 		return 0, ErrInvalidParam
 	}
-	return s.sendDatagram(buf, addr)
-}
-
-func (s *UDPSocket) sendDatagram(buf []byte, addr *UDPAddr) (int, error) {
 	raw := s.fd.Raw()
 	if raw < 0 {
 		return 0, ErrClosed
 	}
 	var ptr unsafe.Pointer
 	var length uint32
-	if addr != nil {
-		if addr.IP.To4() != nil {
-			ptr, length = udpAddrToSockaddr4(addr).Raw()
-		} else {
-			ptr, length = udpAddrToSockaddr6(addr).Raw()
-		}
+	if addr.IP.To4() != nil {
+		ptr, length = udpAddrToSockaddr4(addr).Raw()
+	} else {
+		ptr, length = udpAddrToSockaddr6(addr).Raw()
 	}
-	n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
-	if errno != 0 {
-		return 0, errFromErrno(errno)
-	}
-	return int(n), nil
+	return socketIOResult(zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length)))
 }
 
 // UDPConn represents a UDP connection (connected or unconnected).

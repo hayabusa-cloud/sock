@@ -15,7 +15,6 @@ import (
 	"unsafe"
 
 	"code.hybscloud.com/iox"
-	"code.hybscloud.com/zcall"
 )
 
 // seqpacketSupported reports whether SOCK_SEQPACKET is supported on this platform.
@@ -410,29 +409,47 @@ func TestUnixConnPairVariants(t *testing.T) {
 	})
 }
 
-func TestUnixConnReadPreservesEmptySeqpacketMessage(t *testing.T) {
-	if !seqpacketSupported() {
-		t.Skip("SOCK_SEQPACKET not supported on this platform")
-	}
+func TestUnixPacketRecords(t *testing.T) {
+	for _, network := range []string{"unixgram", "unixpacket"} {
+		t.Run(network, func(t *testing.T) {
+			if network == "unixpacket" && !seqpacketSupported() {
+				t.Skip("SOCK_SEQPACKET not supported on this platform")
+			}
+			pair, err := UnixConnPair(network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pair[0].Close()
+			defer pair[1].Close()
 
-	pair, err := UnixConnPair("unixpacket")
-	if err != nil {
-		t.Fatalf("UnixConnPair unixpacket: %v", err)
+			t.Run("UnixConn", func(t *testing.T) { checkUnixPacketRecords(t, pair[0], pair[1]) })
+			t.Run("Socket", func(t *testing.T) { checkUnixPacketRecords(t, pair[1].UnixSocket, pair[0].NetSocket) })
+		})
 	}
-	defer pair[0].Close()
-	defer pair[1].Close()
+}
 
-	if _, errno := zcall.Sendto(uintptr(pair[1].fd.Raw()), nil, 0, nil, 0); errno != 0 {
-		t.Fatalf("Sendto(empty): errno=%v", errno)
+func checkUnixPacketRecords(t *testing.T, sender, receiver Socket) {
+	t.Helper()
+	var buf [1]byte
+	if n, err := receiver.Read(nil); n != 0 || err != iox.ErrWouldBlock {
+		t.Errorf("Read(nil) on empty queue = (%d, %v)", n, err)
 	}
-
-	buf := make([]byte, 1)
-	n, err := pair[0].Read(buf)
-	if err != nil {
-		t.Fatalf("Read(empty seqpacket): %v", err)
+	if n, err := sender.Write(nil); n != 0 || err != nil {
+		t.Fatalf("Write(nil) = (%d, %v)", n, err)
 	}
-	if n != 0 {
-		t.Fatalf("Read(empty seqpacket) n=%d, want 0", n)
+	if n, err := receiver.Read(buf[:]); n != 0 || err != nil {
+		t.Errorf("Read empty record = (%d, %v)", n, err)
+	}
+	for _, b := range []byte{'a', 'b'} {
+		if n, err := sender.Write([]byte{b}); n != 1 || err != nil {
+			t.Fatalf("Write(%q) = (%d, %v)", b, n, err)
+		}
+	}
+	if n, err := receiver.Read(nil); n != 0 || err != nil {
+		t.Fatalf("Read(nil) with queued record = (%d, %v)", n, err)
+	}
+	if n, err := receiver.Read(buf[:]); n != 1 || err != nil || buf[0] != 'b' {
+		t.Errorf("Read after discarding a = (%d, %v, %q), want b", n, err, buf[:])
 	}
 }
 

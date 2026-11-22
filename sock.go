@@ -80,9 +80,54 @@ func (s *NetSocket) NetworkType() NetworkType { return s.network }
 func (s *NetSocket) Protocol() UnderlyingProtocol {
 	return UnderlyingProtocol(s.typ & 0xF)
 }
-func (s *NetSocket) Close() error                { return s.fd.Close() }
-func (s *NetSocket) Read(p []byte) (int, error)  { return s.fd.Read(p) }
-func (s *NetSocket) Write(p []byte) (int, error) { return s.fd.Write(p) }
+
+func (s *NetSocket) Close() error { return s.fd.Close() }
+
+func (s *NetSocket) isDatagramOrSeqpacket() bool {
+	typ := s.Protocol()
+	return typ == UnderlyingProtocolDgram || typ == UnderlyingProtocolSeqPacket
+}
+
+// Read reads from the socket. On datagram and sequenced-packet sockets,
+// an empty p still consumes a queued record.
+func (s *NetSocket) Read(p []byte) (int, error) {
+	if s.isDatagramOrSeqpacket() {
+		return s.recvFrom(p, nil, nil)
+	}
+	return s.fd.Read(p)
+}
+
+// Write writes p to the socket. On connected datagram and sequenced-packet
+// sockets, an empty p sends an empty record.
+func (s *NetSocket) Write(p []byte) (int, error) {
+	if s.isDatagramOrSeqpacket() {
+		return s.sendConnected(p)
+	}
+	return s.fd.Write(p)
+}
+
+func (s *NetSocket) recvFrom(p []byte, addr unsafe.Pointer, addrLen *uint32) (int, error) {
+	raw := s.fd.Raw()
+	if raw < 0 {
+		return 0, ErrClosed
+	}
+	return socketIOResult(zcall.Recvfrom(uintptr(raw), p, 0, addr, unsafe.Pointer(addrLen)))
+}
+
+func (s *NetSocket) sendConnected(p []byte) (int, error) {
+	raw := s.fd.Raw()
+	if raw < 0 {
+		return 0, ErrClosed
+	}
+	return socketIOResult(zcall.Sendto(uintptr(raw), p, 0, nil, 0))
+}
+
+func socketIOResult(n, errno uintptr) (int, error) {
+	if errno != 0 {
+		return 0, errFromErrno(errno)
+	}
+	return int(n), nil
+}
 
 func (s *NetSocket) Bind(addr Sockaddr) error {
 	raw := s.fd.Raw()
