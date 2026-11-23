@@ -107,13 +107,28 @@ go get code.hybscloud.com/sock
 
 ### TCP
 
-```go
-// Serveur
-ln, _ := sock.ListenTCP4(&sock.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: 8080})
-conn, _ := ln.Accept()
-conn.Read(buf)
-conn.Close()
+En l’absence de connexion en attente, `Accept` renvoie `iox.ErrWouldBlock` par défaut. Le serveur fixe la même échéance sur la socket d’écoute et sur la connexion acceptée. Il dispose ainsi de cinq secondes au total pour accepter une connexion et lire les premiers octets.
 
+```go
+ln, err := sock.ListenTCP4(&sock.TCPAddr{Port: 8080})
+if err != nil {
+	return 0, err
+}
+defer ln.Close()
+
+deadline := time.Now().Add(5 * time.Second)
+ln.SetDeadline(deadline)
+conn, err := ln.Accept()
+if err != nil {
+	return 0, err
+}
+defer conn.Close()
+
+conn.SetReadDeadline(deadline)
+return conn.Read(buf)
+```
+
+```go
 // Client
 conn, _ := sock.DialTCP4(nil, &sock.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080})
 conn.SetNoDelay(true)
@@ -136,12 +151,9 @@ conn.Read(response)
 
 ### SCTP (Linux uniquement)
 
-```go
-// Serveur
-ln, _ := sock.ListenSCTP4(&sock.SCTPAddr{IP: net.ParseIP("0.0.0.0"), Port: 9000})
-conn, _ := ln.Accept()
-conn.Read(buf)
+Pour accepter une association SCTP, utilisez `sock.ListenSCTP4(&sock.SCTPAddr{Port: 9000})` dans l’[exemple de serveur TCP](#tcp).
 
+```go
 // Client avec timeout
 dialer := &sock.SCTPDialer{Timeout: 5 * time.Second}
 conn, _ := dialer.Dial4(nil, &sock.SCTPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9000})
@@ -150,11 +162,9 @@ conn.Write(data)
 
 ### Sockets de Domaine Unix
 
-```go
-// Stream
-ln, _ := sock.ListenUnix("unix", &net.UnixAddr{Name: "/tmp/app.sock"})
-conn, _ := ln.Accept()
+Pour accepter une connexion Unix de type flux, utilisez `sock.ListenUnix("unix", &sock.UnixAddr{Name: "/tmp/app.sock"})` dans l’[exemple de serveur TCP](#tcp).
 
+```go
 // Datagramme
 conn, _ := sock.ListenUnixgram("unixgram", &net.UnixAddr{Name: "/tmp/app.dgram"})
 
