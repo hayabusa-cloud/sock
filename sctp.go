@@ -118,6 +118,9 @@ func (s *SCTPSocket) Protocol() UnderlyingProtocol {
 }
 
 // SCTPConn represents an SCTP connection with adaptive I/O support.
+// Dialers and listeners use one-to-one (SOCK_STREAM) sockets.
+// For one-to-many sockets, use [NewSCTPSocket4] or [NewSCTPSocket6].
+//
 // By default, Read/Write are non-blocking and return iox.ErrWouldBlock immediately.
 // When a deadline is set via SetDeadline/SetReadDeadline/SetWriteDeadline,
 // operations will retry with backoff until success or deadline exceeded.
@@ -268,7 +271,7 @@ func (d *SCTPDialer) Dial4(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket4()
+	sock, err := NewSCTPStreamSocket4()
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +306,7 @@ func (d *SCTPDialer) Dial6(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket6()
+	sock, err := NewSCTPStreamSocket6()
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +429,7 @@ func DialSCTP4(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket4()
+	sock, err := NewSCTPStreamSocket4()
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +467,7 @@ func DialSCTP6(laddr, raddr *SCTPAddr) (*SCTPConn, error) {
 	if raddr == nil {
 		return nil, ErrInvalidParam
 	}
-	sock, err := NewSCTPSocket6()
+	sock, err := NewSCTPStreamSocket6()
 	if err != nil {
 		return nil, err
 	}

@@ -2,107 +2,74 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-//go:build linux && sock_sctp
+//go:build linux
 
 package sock_test
 
 import (
-	"bytes"
 	"io"
 	"testing"
+	"time"
 
-	"code.hybscloud.com/iox"
 	"code.hybscloud.com/sock"
 )
 
-func TestSCTPSocket_ReadWrite(t *testing.T) {
-	addr0, err := sock.ResolveSCTPAddr("sctp6", "[::1]:8088")
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	p := []byte("test0123456789")
-	wait := make(chan struct{}, 1)
-	go func() {
-		lis, err := sock.ListenSCTP6(addr0)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		wait <- struct{}{}
-		conn, err := lis.Accept()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		buf := make([]byte, len(p))
-		for {
-			r := sock.NewMessageReader(conn, sock.MessageOptionsSCTPSocket)
-			rn, err := r.Read(buf)
+func TestSCTPDialRoundTrip(t *testing.T) {
+	const timeout = 3 * time.Second
+	dialer := sock.SCTPDialer{Timeout: timeout}
+	for _, tc := range []struct {
+		name string
+		ip   sock.IP
+		dial func(*sock.SCTPAddr, *sock.SCTPAddr) (*sock.SCTPConn, error)
+	}{
+		{"DialSCTP4", sock.IPv4LoopBack, sock.DialSCTP4},
+		{"DialSCTP6", sock.IPv6LoopBack, sock.DialSCTP6},
+		{"SCTPDialer.Dial4", sock.IPv4LoopBack, dialer.Dial4},
+		{"SCTPDialer.Dial6", sock.IPv6LoopBack, dialer.Dial6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := sock.ListenSCTP("sctp", &sock.SCTPAddr{IP: tc.ip})
+			if err == sock.ErrProtocolNotSupported || err == sock.ErrAddressFamilyNotSupported || err == sock.ErrAddressNotAvailable {
+				t.Skipf("SCTP loopback unavailable: %v", err)
+			}
 			if err != nil {
-				t.Errorf("read message: %v", err)
-				return
+				t.Fatal(err)
 			}
-			if rn != len(p) || !bytes.Equal(p, buf[:rn]) {
-				t.Errorf("read message expected %s but got %s", p, buf[:rn])
-				return
-			}
-			w := sock.NewMessageWriter(conn, sock.MessageOptionsTCPSocket)
-			wn, err := w.Write(buf[:rn])
+			defer ln.Close()
+			deadline := time.Now().Add(timeout)
+			ln.SetDeadline(deadline)
+
+			client, err := tc.dial(nil, ln.Addr().(*sock.SCTPAddr))
 			if err != nil {
-				t.Errorf("write message: %v", err)
-				return
+				t.Fatal(err)
 			}
-			if wn != rn {
-				t.Errorf("short write")
-				return
+			defer client.Close()
+			client.SetDeadline(deadline)
+
+			server, err := ln.Accept()
+			if err != nil {
+				t.Fatal(err)
 			}
-			break
-		}
-	}()
+			defer server.Close()
+			server.SetDeadline(deadline)
 
-	addr1, err := sock.ResolveSCTPAddr("sctp6", "[::1]:8089")
-	if err != nil {
-		t.Error(err)
-		return
+			transferSCTPByte(t, client, server, 'a')
+			transferSCTPByte(t, server, client, 'b')
+			transferSCTPByte(t, client.FD(), server, 'c')
+			if got := client.Protocol(); got != sock.UnderlyingProtocolStream {
+				t.Errorf("Protocol() = %v, want %v", got, sock.UnderlyingProtocolStream)
+			}
+		})
 	}
+}
 
-	<-wait
-	conn, err := sock.DialSCTP6(addr1, addr0)
-	if err != nil {
-		t.Error(err)
-		return
+func transferSCTPByte(t *testing.T, w io.Writer, r io.Reader, want byte) {
+	t.Helper()
+	if n, err := w.Write([]byte{want}); n != 1 || err != nil {
+		t.Fatalf("Write(%q) = %d, %v", want, n, err)
 	}
-
-	sw := sock.SpinWait{}
-	for {
-		w := sock.NewMessageWriter(conn, sock.MessageOptionsSCTPSocket)
-		n, err := w.Write(p)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if n != len(p) {
-			t.Error(io.ErrShortWrite)
-			return
-		}
-
-		r := sock.NewMessageReader(conn, sock.MessageOptionsSCTPSocket)
-		buf := make([]byte, len(p))
-		n, err = r.Read(buf)
-		if err == iox.ErrWouldBlock {
-			sw.Once()
-			continue
-		}
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		if !bytes.Equal(buf, p) {
-			t.Errorf("sctp read expected %s but %s", p, buf)
-			return
-		}
-		break
+	var buf [1]byte
+	if n, err := r.Read(buf[:]); n != 1 || err != nil || buf[0] != want {
+		t.Fatalf("Read after Write(%q) = %q, %d, %v", want, buf[:], n, err)
 	}
 }
