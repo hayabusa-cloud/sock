@@ -80,8 +80,8 @@ sock implements **Strike** and **Adapt**. Spin is not used here because socket o
 
 **Key behaviors:**
 
-- **Non-blocking by default** — `Read`, `Write`, and `Accept` return `iox.ErrWouldBlock` when the socket is not ready.
-- **Deadline-driven adaptation**: Only when a deadline is explicitly set (via `SetDeadline`, `SetReadDeadline`, or `SetWriteDeadline`) does the operation enter a retry loop with progressive backoff.
+- **Non-blocking by default** — `Read`, `Write`, and `Accept` return `iox.ErrWouldBlock` when the socket is not ready. Retry on a readiness notification, or use `iox.Backoff` if your loop polls.
+- **Deadline-driven retries** — Use `SetDeadline` on a connection or listener to let `sock` retry with its own backoff. Connections also support `SetReadDeadline` and `SetWriteDeadline`.
 - **Outcome classification** — Byte counts and return values report progress. Semantic errors guide the caller’s next operation. `NetSocket.Connect` returns `sock.ErrInProgress` when a connection attempt is pending. Higher-level helpers also use `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic`, and `iox.IsProgress`.
 - **TCP and SCTP dials** — When the handshake is pending, `DialTCP`, `DialSCTP`, and their IPv4 and IPv6 variants return a connection and a nil error. In the same case, a `TCPDialer` or `SCTPDialer` with `Timeout == 0` returns `(nil, sock.ErrInProgress)`.
 

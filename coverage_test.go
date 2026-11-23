@@ -10210,7 +10210,7 @@ func TestSCTPSocket_Protocol_DefaultCase(t *testing.T) {
 	}
 }
 
-// --- rawConn Read/Write Gosched path (f returns false then true) ---
+// --- rawConn Read/Write callback retries ---
 
 func TestRawConn_ReadRetry(t *testing.T) {
 	sock, err := NewTCPSocket4()

@@ -80,8 +80,8 @@ sock implémente **Strike** et **Adapt**. Spin n'est pas utilisé ici car les op
 
 **Comportements clés :**
 
-- **Opérations non bloquantes par défaut** — `Read`, `Write` et `Accept` renvoient `iox.ErrWouldBlock` si le socket n’est pas prêt.
-- **Adaptation pilotée par deadline** : Ce n'est que lorsqu'un deadline est explicitement défini (via `SetDeadline`, `SetReadDeadline` ou `SetWriteDeadline`) que l'opération entre dans une boucle de réessai avec backoff progressif.
+- **Opérations non bloquantes par défaut** — `Read`, `Write` et `Accept` renvoient `iox.ErrWouldBlock` si le socket n’est pas prêt. Réessayez dès qu’une notification signale que le socket est prêt, ou utilisez `iox.Backoff` si votre boucle le sonde.
+- **Nouvelles tentatives avec échéance** — Appelez `SetDeadline` sur une connexion ou un socket d’écoute pour que `sock` gère l’attente entre les tentatives. Les connexions proposent aussi `SetReadDeadline` et `SetWriteDeadline`.
 - **Classification des résultats** — Le nombre d’octets et les valeurs renvoyées indiquent la progression. Les erreurs sémantiques guident la prochaine opération. `NetSocket.Connect` renvoie `sock.ErrInProgress` si la connexion est en cours d’établissement. Les fonctions de plus haut niveau utilisent aussi `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` et `iox.IsProgress`.
 - **Connexions TCP et SCTP** — Pendant l’établissement de la connexion, `DialTCP`, `DialSCTP` et leurs variantes IPv4 et IPv6 renvoient une connexion et une erreur `nil`. Dans ce cas, `TCPDialer` et `SCTPDialer` renvoient `(nil, sock.ErrInProgress)` si `Timeout == 0`.
 

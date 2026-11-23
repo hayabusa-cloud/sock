@@ -80,8 +80,8 @@ sock 实现了 **Strike** 和 **Adapt**。由于套接字操作等待的是内�
 
 **关键行为：**
 
-- **默认非阻塞** — 套接字尚未就绪时，`Read`、`Write` 和 `Accept` 返回 `iox.ErrWouldBlock`。
-- **截止时间驱动的自适应**：只有当显式设置截止时间（通过 `SetDeadline`、`SetReadDeadline` 或 `SetWriteDeadline`）时，操作才会进入带渐进退避的重试循环。
+- **默认非阻塞** — 套接字尚未就绪时，`Read`、`Write` 和 `Accept` 返回 `iox.ErrWouldBlock`。收到就绪通知后再重试。如果自行轮询，可用 `iox.Backoff` 控制重试间隔。
+- **设置截止时间后重试** — 在连接或监听器上调用 `SetDeadline`，由 `sock` 控制重试间隔。连接还支持 `SetReadDeadline` 和 `SetWriteDeadline`。
 - **结果分类** — 字节数和返回值表示操作取得的进展，语义错误指引调用方选择下一步操作。连接仍在建立时，`NetSocket.Connect` 返回 `sock.ErrInProgress`。上层辅助函数也使用 `iox.ErrMore`、`iox.Classify`、`iox.IsSemantic` 和 `iox.IsProgress`。
 - **TCP 和 SCTP 连接** — 握手仍在进行时，`DialTCP`、`DialSCTP` 及其 IPv4 和 IPv6 版本返回连接和 `nil` 错误。在相同情况下，若 `Timeout == 0`，`TCPDialer` 和 `SCTPDialer` 返回 `(nil, sock.ErrInProgress)`。
 
