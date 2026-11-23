@@ -29,13 +29,13 @@ var (
 	ErrNotSupported = errors.New("sock: operation not supported")
 )
 
-// NetworkType represents the address family.
+// NetworkType is a native socket address family.
 type NetworkType int
 
 const (
-	NetworkUnix NetworkType = 1  // AF_UNIX  — Unix domain sockets.
-	NetworkIPv4 NetworkType = 2  // AF_INET  — IPv4.
-	NetworkIPv6 NetworkType = 10 // AF_INET6 — IPv6.
+	NetworkUnix NetworkType = AF_UNIX
+	NetworkIPv4 NetworkType = AF_INET
+	NetworkIPv6 NetworkType = AF_INET6
 )
 
 // Socket is a network socket with handle-based resource management.

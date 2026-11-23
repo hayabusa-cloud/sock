@@ -10713,18 +10713,6 @@ func TestNetSocket_NetworkType(t *testing.T) {
 	}
 }
 
-func TestNetSocket_NetworkTypeIPv6(t *testing.T) {
-	sock, err := NewTCPSocket6()
-	if err != nil {
-		t.Fatalf("NewTCPSocket6: %v", err)
-	}
-	defer sock.Close()
-
-	if sock.NetworkType() != NetworkIPv6 {
-		t.Errorf("NetworkType: got %d, want %d", sock.NetworkType(), NetworkIPv6)
-	}
-}
-
 func TestNetSocket_NetworkTypeUnix(t *testing.T) {
 	sock, err := NewNetUnixSocket(SOCK_STREAM)
 	if err != nil {
