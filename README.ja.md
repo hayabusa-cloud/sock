@@ -106,13 +106,28 @@ go get code.hybscloud.com/sock
 
 ### TCP
 
-```go
-// サーバー
-ln, _ := sock.ListenTCP4(&sock.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: 8080})
-conn, _ := ln.Accept()
-conn.Read(buf)
-conn.Close()
+接続待ちのキューが空の場合、`Accept` はデフォルトで `iox.ErrWouldBlock` を返します。この例ではリスナーと受け付けた接続に同じ期限を設定し、接続を待って最初のデータを読み取るまでを合計 5 秒に制限します。
 
+```go
+ln, err := sock.ListenTCP4(&sock.TCPAddr{Port: 8080})
+if err != nil {
+	return 0, err
+}
+defer ln.Close()
+
+deadline := time.Now().Add(5 * time.Second)
+ln.SetDeadline(deadline)
+conn, err := ln.Accept()
+if err != nil {
+	return 0, err
+}
+defer conn.Close()
+
+conn.SetReadDeadline(deadline)
+return conn.Read(buf)
+```
+
+```go
 // クライアント
 conn, _ := sock.DialTCP4(nil, &sock.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080})
 conn.SetNoDelay(true)
@@ -135,12 +150,9 @@ conn.Read(response)
 
 ### SCTP（Linuxのみ）
 
-```go
-// サーバー
-ln, _ := sock.ListenSCTP4(&sock.SCTPAddr{IP: net.ParseIP("0.0.0.0"), Port: 9000})
-conn, _ := ln.Accept()
-conn.Read(buf)
+SCTP アソシエーションを受け付けるには、[TCP サーバーの例](#tcp)で `sock.ListenSCTP4(&sock.SCTPAddr{Port: 9000})` を使います。
 
+```go
 // タイムアウト付きクライアント
 dialer := &sock.SCTPDialer{Timeout: 5 * time.Second}
 conn, _ := dialer.Dial4(nil, &sock.SCTPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9000})
@@ -149,11 +161,9 @@ conn.Write(data)
 
 ### Unixドメインソケット
 
-```go
-// ストリーム
-ln, _ := sock.ListenUnix("unix", &net.UnixAddr{Name: "/tmp/app.sock"})
-conn, _ := ln.Accept()
+Unix ドメインのストリーム接続を受け付けるには、[TCP サーバーの例](#tcp)で `sock.ListenUnix("unix", &sock.UnixAddr{Name: "/tmp/app.sock"})` を使います。
 
+```go
 // データグラム
 conn, _ := sock.ListenUnixgram("unixgram", &net.UnixAddr{Name: "/tmp/app.dgram"})
 

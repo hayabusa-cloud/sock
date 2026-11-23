@@ -106,13 +106,28 @@ go get code.hybscloud.com/sock
 
 ### TCP
 
-```go
-// 服务器
-ln, _ := sock.ListenTCP4(&sock.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: 8080})
-conn, _ := ln.Accept()
-conn.Read(buf)
-conn.Close()
+没有待接受的连接时，`Accept` 默认返回 `iox.ErrWouldBlock`。服务端给监听器和已接受的连接设置同一个截止时间，用这五秒等待连接并读取第一批数据。
 
+```go
+ln, err := sock.ListenTCP4(&sock.TCPAddr{Port: 8080})
+if err != nil {
+	return 0, err
+}
+defer ln.Close()
+
+deadline := time.Now().Add(5 * time.Second)
+ln.SetDeadline(deadline)
+conn, err := ln.Accept()
+if err != nil {
+	return 0, err
+}
+defer conn.Close()
+
+conn.SetReadDeadline(deadline)
+return conn.Read(buf)
+```
+
+```go
 // 客户端
 conn, _ := sock.DialTCP4(nil, &sock.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080})
 conn.SetNoDelay(true)
@@ -135,12 +150,9 @@ conn.Read(response)
 
 ### SCTP（仅 Linux）
 
-```go
-// 服务器
-ln, _ := sock.ListenSCTP4(&sock.SCTPAddr{IP: net.ParseIP("0.0.0.0"), Port: 9000})
-conn, _ := ln.Accept()
-conn.Read(buf)
+要接受 SCTP 关联，请在 [TCP 服务端示例](#tcp)中使用 `sock.ListenSCTP4(&sock.SCTPAddr{Port: 9000})` 创建监听器。
 
+```go
 // 带超时的客户端
 dialer := &sock.SCTPDialer{Timeout: 5 * time.Second}
 conn, _ := dialer.Dial4(nil, &sock.SCTPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9000})
@@ -149,11 +161,9 @@ conn.Write(data)
 
 ### Unix 域套接字
 
-```go
-// 流套接字
-ln, _ := sock.ListenUnix("unix", &net.UnixAddr{Name: "/tmp/app.sock"})
-conn, _ := ln.Accept()
+要接受 Unix 流套接字连接，请在 [TCP 服务端示例](#tcp)中使用 `sock.ListenUnix("unix", &sock.UnixAddr{Name: "/tmp/app.sock"})` 创建监听器。
 
+```go
 // 数据报套接字
 conn, _ := sock.ListenUnixgram("unixgram", &net.UnixAddr{Name: "/tmp/app.dgram"})
 
