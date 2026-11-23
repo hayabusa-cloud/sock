@@ -118,8 +118,9 @@ func (c *TCPConn) SetKeepAlivePeriod(d time.Duration) error {
 	return SetTCPKeepIntvl(c.fd, secs)
 }
 
-// SyscallConn returns a raw network connection for direct syscall access.
-// This implements the syscall.Conn interface.
+// SyscallConn returns a raw handle that borrows c's descriptor.
+// Keep c open through each Control, Read, or Write call. Use the descriptor
+// number passed to a callback only within that callback.
 func (c *TCPConn) SyscallConn() (syscall.RawConn, error) {
 	if c.fd.Raw() < 0 {
 		return nil, ErrClosed

@@ -71,15 +71,13 @@ var (
 	NetworkByteOrder = binary.BigEndian
 )
 
-// rawConn implements syscall.RawConn for raw syscall access.
-// This allows users to perform custom operations on the underlying
-// file descriptor while maintaining proper synchronization.
+// rawConn borrows its socket's descriptor. The caller coordinates Close
+// with calls on this handle.
 type rawConn struct {
 	fd *iofd.FD
 }
 
-// Control invokes f on the underlying file descriptor.
-// The file descriptor is guaranteed to remain valid while f executes.
+// Control invokes f with the borrowed descriptor.
 func (c *rawConn) Control(f func(fd uintptr)) error {
 	raw := c.fd.Raw()
 	if raw < 0 {

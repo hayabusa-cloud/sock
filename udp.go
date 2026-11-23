@@ -164,8 +164,9 @@ func (c *UDPConn) Write(buf []byte) (int, error) {
 	return adaptiveWrite(func() (int, error) { return c.UDPSocket.Write(buf) }, &c.deadline)
 }
 
-// SyscallConn returns a raw network connection for direct syscall access.
-// This implements the syscall.Conn interface.
+// SyscallConn returns a raw handle that borrows c's descriptor.
+// Keep c open through each Control, Read, or Write call. Use the descriptor
+// number passed to a callback only within that callback.
 func (c *UDPConn) SyscallConn() (syscall.RawConn, error) {
 	if c.fd.Raw() < 0 {
 		return nil, ErrClosed

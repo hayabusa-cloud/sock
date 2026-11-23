@@ -50,7 +50,7 @@ NetSocket (base)
 └── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
-Todos los sockets exponen `FD() *iofd.FD` para integración con io_uring y otros mecanismos de I/O asíncrona.
+Para usar io_uring u otros mecanismos de E/S asíncrona, `FD()` devuelve el `*iofd.FD` que pertenece al socket. Mantén el socket abierto hasta que terminen las operaciones que usan ese descriptor o la interfaz devuelta por `SyscallConn`. Usa `s.FD().Dup()` si necesitas un descriptor que puedas cerrar por separado.
 
 ### Integración con el Kernel
 
