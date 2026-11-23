@@ -168,6 +168,12 @@ func TestConnectedUDPDatagrams(t *testing.T) {
 			if n, err := rw.Write(oversize); n != 0 || err != sock.ErrMessageTooLarge {
 				t.Errorf("Write oversized datagram = (%d, %v), want (0, ErrMessageTooLarge)", n, err)
 			}
+			if err := conn.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := rw.Write(nil); n != 0 || err != sock.ErrClosed {
+				t.Errorf("Write(nil) after Close = (%d, %v), want (0, ErrClosed)", n, err)
+			}
 		})
 	}
 }
