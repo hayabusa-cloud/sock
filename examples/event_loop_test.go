@@ -29,7 +29,7 @@ import (
 //	Code above sock provides:
 //	  - Accept / dispatch policy
 //	  - Connection lifecycle and handler scheduling
-//	  - Optional uring submission/completion, or a higher-level runtime such as urex
+//	  - Optional io_uring submission and completion handling
 //
 // In code.hybscloud.com/sox, you would write:
 //
@@ -43,10 +43,10 @@ import (
 //	iface.Listen(ctx, "tcp", ":8080")
 //	iface.Start(ctx)
 //
-// Below is the smallest manual pattern using sock + goroutines: a
-// single-threaded accept loop that dispatches connections. An uring-based
-// runtime keeps the same sock boundary and replaces the caller-owned adaptive
-// backoff path with completion-driven wakeups.
+// This loop retries Accept after backoff and dispatches each connection to a
+// goroutine. A readiness loop can retry Accept when the listener is readable.
+// A runtime that submits an ordinary io_uring accept gets the new connection
+// descriptor from the successful completion.
 func TestEventLoopEcho(t *testing.T) {
 	ln, err := sock.ListenTCP4(&sock.TCPAddr{IP: sock.IPv4LoopBack})
 	if err != nil {
@@ -75,17 +75,9 @@ func TestEventLoopEcho(t *testing.T) {
 			default:
 			}
 
-			// Non-blocking accept: returns immediately.
-			// In sox, this was IORING_OP_ACCEPT submitted to the SQ.
-			// A completion-driven runtime would submit ACCEPT on ln.FD().Raw()
-			// and wait for the CQE instead of using caller-owned backoff here.
 			conn, err := ln.Accept()
 			if err == iox.ErrWouldBlock {
-				// No pending connection — adaptively back off and retry.
-				// iox.Backoff is the software Adapt tier for caller-owned loops
-				// above sock when CQE/readiness wakeups are not in use.
-				// In sox, the loop waited for the next CQE.
-				// A completion-driven loop would park until the next accept CQE.
+				// The queue is empty. Back off before the next accept attempt.
 				acceptBackoff.Wait()
 				continue
 			}
@@ -166,17 +158,9 @@ func handleConn(conn *sock.TCPConn) {
 // TestFDExtractionForUring demonstrates extracting the raw fd from sock
 // types for use with io_uring or epoll.
 //
-// This is the bridge between sock (socket creation + non-blocking I/O)
-// and caller-owned completion code above it:
-//
-//  1. Create sockets with sock (gets optimal defaults: NONBLOCK, CLOEXEC,
-//     REUSEADDR, REUSEPORT, ZEROCOPY)
-//  2. Extract fd via FD().Raw()
-//  3. Submit fd to io_uring ring (ACCEPT, RECV, SEND, etc.)
-//  4. Process CQEs in your event loop or runtime
-//
-// net.Conn cannot provide this: its fd is managed by the Go runtime's
-// netpoller and must not be used directly for kernel I/O submission.
+// Use the listening TCP descriptor for ACCEPT, a connected TCP descriptor for
+// stream I/O, and the bound UDP descriptor for datagrams. Keep each socket
+// open until operations using its borrowed descriptor have finished.
 func TestFDExtractionForUring(t *testing.T) {
 	// TCP listener fd — used for IORING_OP_ACCEPT.
 	ln, err := sock.ListenTCP4(&sock.TCPAddr{IP: sock.IPv4LoopBack})

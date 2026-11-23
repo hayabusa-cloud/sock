@@ -80,8 +80,8 @@ sock implementa **Strike** y **Adapt**. Spin no se utiliza aquí porque las oper
 
 **Comportamientos clave:**
 
-- **Operaciones no bloqueantes por defecto** — `Read`, `Write` y `Accept` devuelven `iox.ErrWouldBlock` si el socket no está listo.
-- **Adaptación dirigida por deadline**: Solo cuando se establece explícitamente un deadline (via `SetDeadline`, `SetReadDeadline` o `SetWriteDeadline`) la operación entra en un bucle de reintentos con backoff progresivo.
+- **Operaciones no bloqueantes por defecto** — `Read`, `Write` y `Accept` devuelven `iox.ErrWouldBlock` si el socket no está listo. Reintenta al recibir una notificación de disponibilidad, o usa `iox.Backoff` si sondeas el socket en un bucle.
+- **Reintentos con plazo** — Usa `SetDeadline` en una conexión o un socket de escucha para que `sock` gestione la espera entre reintentos. Las conexiones también admiten `SetReadDeadline` y `SetWriteDeadline`.
 - **Clasificación de resultados** — El número de bytes y los valores devueltos indican el progreso. Los errores semánticos orientan la siguiente operación. `NetSocket.Connect` devuelve `sock.ErrInProgress` si el intento de conexión sigue en curso. Las funciones de nivel superior también usan `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` e `iox.IsProgress`.
 - **Conexiones TCP y SCTP** — Mientras se establece la conexión, `DialTCP`, `DialSCTP` y sus variantes para IPv4 e IPv6 devuelven una conexión y un error `nil`. En ese caso, `TCPDialer` y `SCTPDialer` devuelven `(nil, sock.ErrInProgress)` si `Timeout == 0`.
 

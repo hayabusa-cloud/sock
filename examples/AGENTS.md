@@ -22,34 +22,29 @@ Platform: Linux (recommend 6.18 LTS), Go 1.27+.
 
 - socket creation, listen, dial, accept, read, write, close
 - `iox` non-blocking semantics at the API boundary (`iox.ErrWouldBlock`, `iox.ErrMore` where applicable)
-- adaptive retry when a deadline is set
+- deadline-driven retries and retries of raw `Read` or `Write` callbacks that return `false`
 - raw fd exposure via `FD().Raw()` for readiness/completion handoff
 
 Code above `sock` owns:
 
 - accept / dispatch / shutdown policy
-- caller-owned retry loops using `iox.Backoff`
+- polling with `iox.Backoff` when readiness notifications are unavailable
 - readiness or completion integration (`uring`, epoll, or another runtime)
 - protocol logic, handler scheduling, and orchestration
-
-The live story is: `sock` exposes non-blocking socket lifecycle over `zcall` / `iofd` with `iox` semantics; caller code
-can stay manual, submit raw fds to `uring`, or move up to `urex` when it wants a full runtime surface.
 
 ## Default Imports
 
 ```go
 import (
-"bytes"
-"net"
-"time"
+	"bytes"
+	"time"
 
-"code.hybscloud.com/iox"
-"code.hybscloud.com/sock"
+	"code.hybscloud.com/iox"
+	"code.hybscloud.com/sock"
 )
 ```
 
-Add `code.hybscloud.com/uring` when you are actually submitting SQEs. Move up to `code.hybscloud.com/urex`
-when the example is about the runtime layer rather than bare socket control flow.
+Import `code.hybscloud.com/uring` for examples that submit io_uring operations.
 
 ## Choose a Starting Point
 
@@ -59,17 +54,14 @@ when the example is about the runtime layer rather than bare socket control flow
 | TCP echo server or client/server round trip | `tcp_test.go`        | Shows dial/listen, adaptive deadlines, and non-blocking semantics          |
 | UDP request/response                        | `udp_test.go`        | Shows both unconnected and connected UDP flows                             |
 | Manual accept loop above `sock`             | `event_loop_test.go` | Shows caller-owned dispatch and `iox.Backoff` above `sock`                 |
-| `uring` handoff via raw fd                  | `event_loop_test.go` | Shows `FD().Raw()` as the boundary for `ACCEPT`, `RECV`, `SEND`, `RECVMSG` |
+| `uring` handoff via raw fd                  | `event_loop_test.go` | Shows listener, connected TCP, and bound UDP descriptors |
 
 ## Higher Layer Code Rules
 
-1. **No deadline means pure non-blocking.** Expect `iox.ErrWouldBlock` and hand control back to your loop.
-2. **In caller-owned retry loops, use `iox.Backoff`.** `sock` keeps its network-tuned adaptive backoff internal to
-   deadline-driven APIs.
-3. **A deadline enables adaptive retry inside `sock`.** Use it for single-goroutine logic that should keep trying until
-   success or `sock.ErrTimedOut`.
-4. **Keep the fd handoff explicit.** Create sockets with `sock`, then pass `FD().Raw()` to `uring` or a runtime such as
-   `urex`.
+1. **With readiness notifications, leave the deadline unset.** After `iox.ErrWouldBlock`, retry `Read` or `Accept` when the socket is readable and `Write` when it is writable.
+2. **When polling, keep one `iox.Backoff` per loop.** Call `Wait()` after `iox.ErrWouldBlock` and `Reset()` after progress, as in the accept loop below.
+3. **Set a deadline to let `sock` retry.** The connection or listener waits internally and returns `sock.ErrTimedOut` if the operation remains blocked past the deadline. [Backoff schedules](../AGENTS.md#backoff)
+4. **Keep the fd handoff explicit.** Keep the socket open while the event loop uses the descriptor borrowed through `FD().Raw()`.
 5. **Use `iox.Copy`, `iox.CopyPolicy`, or `iox.CopyNPolicy`, not `io.Copy`.**
 6. **For TCP streams, prefer `iox.CopyNPolicy` for exact byte counts and `iox.CopyPolicy` for stream-to-EOF flow.**
    Do not assume one `Read` or `Write` transfers a whole logical message.
@@ -81,40 +73,37 @@ when the example is about the runtime layer rather than bare socket control flow
 ```go
 ln, err := sock.ListenTCP4(laddr)
 if err != nil {
-return err
+	return err
 }
 defer ln.Close()
 
 var backoff iox.Backoff
-
 for {
-conn, err := ln.Accept()
-if err == iox.ErrWouldBlock {
-backoff.Wait()
-continue
-}
-if err != nil {
-return err
-}
-backoff.Reset()
-go handleConn(conn)
+	conn, err := ln.Accept()
+	if err == iox.ErrWouldBlock {
+		backoff.Wait()
+		continue
+	}
+	if err != nil {
+		return err
+	}
+	backoff.Reset()
+	go handleConn(conn)
 }
 ```
 
 ### `uring` handoff
 
-```go
-ln, err := sock.ListenTCP4(laddr)
-if err != nil {
-return err
-}
-fd := ln.FD().Raw()
+Keep the TCP listener `ln` open while the ring has an accept pending on it.
 
-// Caller-owned completion layer:
-// submit ACCEPT / RECV / SEND on fd through uring,
-// then dispatch CQEs in your loop or runtime.
-_ = fd
+```go
+listenerFD := ln.FD().Raw()
+if err := ring.Accept(uring.ForFD(listenerFD)); err != nil {
+	return err
+}
 ```
+
+When the event loop receives this accept’s completion, check `cqe.Err()`. On success, `cqe.Res` is the new connection descriptor. Submit `RECV` and `SEND` on that descriptor and close it after the connection’s I/O finishes.
 
 ### Adaptive read/write
 
@@ -138,8 +127,6 @@ return err
 
 - Do not assume `sock` blocks like `net`.
 - Do not hide `iox.ErrWouldBlock`; it is the control signal for caller-owned loops.
-- Do not use fixed `time.Sleep` for repeated `ErrWouldBlock` polling; use `iox.Backoff` or a readiness/completion
-  wakeup.
 - Do not route non-blocking stream copies through `io.Copy`; use `iox.Copy`, `iox.CopyPolicy`, `iox.CopyNPolicy`, or
   another non-blocking-aware helper instead.
 - Do not drop down into `syscall.RawConn` when `FD().Raw()` already gives the descriptor you need.
@@ -170,10 +157,7 @@ Every I/O call in `iox` classifies into four observable cases:
 Outcome = { OK, WouldBlock, More, Failure }
 ```
 
-`OK` and `Failure` are terminal: the operation completed or broke. `WouldBlock`
-and `More` are *semantic* (non-terminal): they signal that the operation can
-resume. `Classify(err) → Outcome` is the universal classifier; `IsSemantic`,
-`IsNonFailure`, and `IsProgress` are derived predicates on this carrier.
+`iox.Classify(err)` describes one call. `OK` can mean a short stream write or a complete datagram. On `Failure`, handle the original error. `WouldBlock` and `More` describe how work can resume. For a boolean check, pass `err` to `IsSemantic`, `IsNonFailure`, or `IsProgress`.
 
 For reads and writes, account for the returned count before handling the outcome.
 

@@ -80,8 +80,8 @@ sockは**Strike**と**Adapt**を実装します。ソケット操作はカーネ
 
 **主な動作：**
 
-- **デフォルトはノンブロッキング** — ソケットの準備ができていない場合、`Read`、`Write`、`Accept` は `iox.ErrWouldBlock` を返します。
-- **デッドライン駆動の適応**: デッドラインが明示的に設定された場合（`SetDeadline`、`SetReadDeadline`、`SetWriteDeadline`経由）のみ、操作は漸進的バックオフ付きのリトライループに入ります。
+- **デフォルトはノンブロッキング** — ソケットの準備ができていない場合、`Read`、`Write`、`Accept` は `iox.ErrWouldBlock` を返します。準備完了の通知を受けてから再試行します。ループでポーリングする場合は `iox.Backoff` を使います。
+- **デッドライン付きの再試行** — 接続またはリスナーで `SetDeadline` を呼ぶと、`sock` が再試行の間隔を調整します。接続では `SetReadDeadline` と `SetWriteDeadline` も使えます。
 - **結果の分類** — バイト数と戻り値は処理がどこまで進んだかを示し、セマンティックエラーは呼び出し側が次の操作を選ぶ手がかりになります。接続処理が進行中の場合、`NetSocket.Connect` は `sock.ErrInProgress` を返します。上位のヘルパーは `iox.ErrMore`、`iox.Classify`、`iox.IsSemantic`、`iox.IsProgress` も使います。
 - **TCP と SCTP の接続** — ハンドシェイクが進行中でも、`DialTCP`、`DialSCTP` およびそれぞれの IPv4・IPv6 版は接続と `nil` エラーを返します。同じ状況で `Timeout == 0` の `TCPDialer` と `SCTPDialer` は `(nil, sock.ErrInProgress)` を返します。
 
