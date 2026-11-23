@@ -113,11 +113,8 @@ func TestTCPEchoAdaptive(t *testing.T) {
 //   - Read → (0, iox.ErrWouldBlock) when no data available
 //   - Write → (0, iox.ErrWouldBlock) when send buffer full
 //
-// This is the operating mode used by caller-owned event loops and uring-backed
-// runtimes above sock. Historically, `sox` (`code.hybscloud.com/sox`) drove
-// the same non-blocking pattern before the current `uring` / `urex` split.
-// The runtime registers the FD and retries when the kernel signals readiness
-// or completion.
+// A readiness loop retries Accept and Read when the descriptor is readable,
+// and Write when it is writable. The historical sox event loop used io_uring.
 //
 // In contrast, net.TCPListener.Accept() blocks the caller until a connection
 // arrives, the listener closes, or a deadline/error path breaks the wait.
@@ -134,8 +131,8 @@ func TestTCPNonBlockingSemantics(t *testing.T) {
 		t.Fatalf("Accept without deadline: got %v, want iox.ErrWouldBlock", err)
 	}
 
-	// Direct FD access — not available in net package without SyscallConn.
-	// This fd can be submitted directly to io_uring for ACCEPT/READ/WRITE ops.
+	// Use the listener descriptor for io_uring accepts. Stream reads and writes
+	// use the accepted connection descriptor.
 	fd := ln.FD().Raw()
 	if fd < 0 {
 		t.Fatal("expected valid fd")

@@ -32,9 +32,6 @@ Code above `sock` owns:
 - readiness or completion integration (`uring`, epoll, or another runtime)
 - protocol logic, handler scheduling, and orchestration
 
-The live story is: `sock` exposes non-blocking socket lifecycle over `zcall` / `iofd` with `iox` semantics; caller code
-can stay manual, submit raw fds to `uring`, or move up to `urex` when it wants a full runtime surface.
-
 ## Default Imports
 
 ```go
@@ -48,8 +45,7 @@ import (
 )
 ```
 
-Add `code.hybscloud.com/uring` when you are actually submitting SQEs. Move up to `code.hybscloud.com/urex`
-when the example is about the runtime layer rather than bare socket control flow.
+Import `code.hybscloud.com/uring` for examples that submit io_uring operations.
 
 ## Choose a Starting Point
 
@@ -59,7 +55,7 @@ when the example is about the runtime layer rather than bare socket control flow
 | TCP echo server or client/server round trip | `tcp_test.go`        | Shows dial/listen, adaptive deadlines, and non-blocking semantics          |
 | UDP request/response                        | `udp_test.go`        | Shows both unconnected and connected UDP flows                             |
 | Manual accept loop above `sock`             | `event_loop_test.go` | Shows caller-owned dispatch and `iox.Backoff` above `sock`                 |
-| `uring` handoff via raw fd                  | `event_loop_test.go` | Shows `FD().Raw()` as the boundary for `ACCEPT`, `RECV`, `SEND`, `RECVMSG` |
+| `uring` handoff via raw fd                  | `event_loop_test.go` | Shows listener, connected TCP, and bound UDP descriptors |
 
 ## Higher Layer Code Rules
 
@@ -68,8 +64,7 @@ when the example is about the runtime layer rather than bare socket control flow
    deadline-driven APIs.
 3. **A deadline enables adaptive retry inside `sock`.** Use it for single-goroutine logic that should keep trying until
    success or `sock.ErrTimedOut`.
-4. **Keep the fd handoff explicit.** Create sockets with `sock`, then pass `FD().Raw()` to `uring` or a runtime such as
-   `urex`.
+4. **Keep the fd handoff explicit.** Keep the socket open while the event loop uses the descriptor borrowed through `FD().Raw()`.
 5. **Use `iox.Copy`, `iox.CopyPolicy`, or `iox.CopyNPolicy`, not `io.Copy`.**
 6. **For TCP streams, prefer `iox.CopyNPolicy` for exact byte counts and `iox.CopyPolicy` for stream-to-EOF flow.**
    Do not assume one `Read` or `Write` transfers a whole logical message.
@@ -103,18 +98,16 @@ go handleConn(conn)
 
 ### `uring` handoff
 
-```go
-ln, err := sock.ListenTCP4(laddr)
-if err != nil {
-return err
-}
-fd := ln.FD().Raw()
+Keep the TCP listener `ln` open while the ring has an accept pending on it.
 
-// Caller-owned completion layer:
-// submit ACCEPT / RECV / SEND on fd through uring,
-// then dispatch CQEs in your loop or runtime.
-_ = fd
+```go
+listenerFD := ln.FD().Raw()
+if err := ring.Accept(uring.ForFD(listenerFD)); err != nil {
+	return err
+}
 ```
+
+When the event loop receives this accept’s completion, check `cqe.Err()`. On success, `cqe.Res` is the new connection descriptor. Submit `RECV` and `SEND` on that descriptor and close it after the connection’s I/O finishes.
 
 ### Adaptive read/write
 
@@ -138,8 +131,7 @@ return err
 
 - Do not assume `sock` blocks like `net`.
 - Do not hide `iox.ErrWouldBlock`; it is the control signal for caller-owned loops.
-- Do not use fixed `time.Sleep` for repeated `ErrWouldBlock` polling; use `iox.Backoff` or a readiness/completion
-  wakeup.
+- Use `iox.Backoff` or a readiness notification before retrying a direct socket call that returned `iox.ErrWouldBlock`.
 - Do not route non-blocking stream copies through `io.Copy`; use `iox.Copy`, `iox.CopyPolicy`, `iox.CopyNPolicy`, or
   another non-blocking-aware helper instead.
 - Do not drop down into `syscall.RawConn` when `FD().Raw()` already gives the descriptor you need.

@@ -23,9 +23,8 @@
 //  1. `tcp_test.go` for stream dial/listen flow, adaptive deadlines, and
 //     non-blocking semantics.
 //  2. `udp_test.go` for unconnected and connected datagram flow.
-//  3. `event_loop_test.go` for manual accept loops, `iox.Backoff`,
-//     `FD().Raw()`, and the boundary to `uring` or higher runtimes such as
-//     `urex`.
+//  3. `event_loop_test.go` for a caller-owned accept loop, `iox.Backoff`,
+//     and borrowing a descriptor with `FD().Raw()`.
 //
 // Run the examples with:
 //
