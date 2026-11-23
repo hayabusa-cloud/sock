@@ -18,7 +18,7 @@ Go 语言零分配套接字类型与地址处理库（Unix 系统）。
 - **零分配地址** — Sockaddr 类型直接编码为内核可用的结构；`Raw()` 返回 `unsafe.Pointer`，无序列化，无堆分配。
 - **零开销系统调用** — 所有 I/O 路径均使用 `zcall` 汇编入口直接调用内核，无需经过 Go 运行时调度器。
 - **协议支持** — TCP、UDP、SCTP、Unix 域（stream/dgram/seqpacket）及原始 IP 套接字；每种协议均支持 IPv4 和 IPv6。
-- **自适应 I/O** — 三层进度模型（Strike-Spin-Adapt）：操作默认立即返回 `iox.ErrWouldBlock`；仅在显式设置截止时间时启用退避重试
+- **自适应 I/O** — 读取、写入和接受连接默认都是非阻塞操作。设置截止时间后，如果套接字尚未就绪，操作会逐步延长等待时间并重试。
 - **io_uring 就绪** — 每个套接字通过 `FD() *iofd.FD` 暴露文件描述符，可直接接入 `uring`、`takt` 及其他异步 I/O 运行时。
 - **UDP 批量 I/O** — `SendMessages`/`RecvMessages` 使用 `sendmmsg(2)`/`recvmmsg(2)` 在单次系统调用中处理多条数据报；自适应变体支持截止时间。
 - **网络链路查询** — `Links`、`LinkByName` 和 `LinkByIndex` 通过 `zcall` 提供 Linux 原生链路枚举；内部用于 IPv6 区域 ID 解析。
@@ -80,20 +80,28 @@ sock 实现了 **Strike** 和 **Adapt**。由于套接字操作等待的是内�
 
 **关键行为：**
 
-- **默认非阻塞**：`Read`、`Write`、`Accept` 和 `Dial` 操作在内核未就绪时立即返回 `iox.ErrWouldBlock`。
+- **默认非阻塞** — 套接字尚未就绪时，`Read`、`Write` 和 `Accept` 返回 `iox.ErrWouldBlock`。
 - **截止时间驱动的自适应**：只有当显式设置截止时间（通过 `SetDeadline`、`SetReadDeadline` 或 `SetWriteDeadline`）时，操作才会进入带渐进退避的重试循环。
-- **结果分类**：进度由字节计数和返回值承载，控制由语义错误承载。`sock` 的直接调用通常在未就绪时返回
-  `iox.ErrWouldBlock`，在连接仍处于挂起状态时返回 `sock.ErrInProgress`；`iox.ErrMore`、`iox.Classify`、
-  `iox.IsSemantic` 和 `iox.IsProgress` 仍是 `sock` 之上辅助层使用的共享分类词汇。
-- **非阻塞 Dial**：与 `net.Dial` 不同，`DialTCP4` 等函数在连接尝试开始后立即返回。TCP 握手可能仍在进行中（`ErrInProgress` 被静默忽略）。如需阻塞行为，请使用带超时的 `TCPDialer`：
+- **结果分类** — 字节数和返回值表示操作取得的进展，语义错误指引调用方选择下一步操作。连接仍在建立时，`NetSocket.Connect` 返回 `sock.ErrInProgress`。上层辅助函数也使用 `iox.ErrMore`、`iox.Classify`、`iox.IsSemantic` 和 `iox.IsProgress`。
+- **TCP 和 SCTP 连接** — 握手仍在进行时，`DialTCP`、`DialSCTP` 及其 IPv4 和 IPv6 版本返回连接和 `nil` 错误。在相同情况下，若 `Timeout == 0`，`TCPDialer` 和 `SCTPDialer` 返回 `(nil, sock.ErrInProgress)`。
 
 ```go
-// 非阻塞（立即返回，握手可能仍在进行）
-conn, _ := sock.DialTCP4(nil, raddr)
+conn, err := sock.DialTCP4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
+```
 
-// 带超时的阻塞（等待连接完成或超时）
+将超时设为正值，拨号器就会等待握手完成。本例最多等待五秒。
+
+```go
 dialer := &sock.TCPDialer{Timeout: 5 * time.Second}
-conn, _ := dialer.Dial4(nil, raddr)
+conn, err := dialer.Dial4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
 ```
 
 ## 安装

@@ -18,7 +18,7 @@ Langue: [English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](
 - **Adresses sans allocation** — Les types Sockaddr s'encodent directement en structures orientées noyau ; `Raw()` retourne un `unsafe.Pointer` sans marshaling ni allocation sur le tas.
 - **Syscalls sans surcharge** — Tous les chemins d'I/O utilisent des points d'entrée assembleur `zcall` qui appellent le noyau directement, sans passer par l'ordonnanceur du runtime Go.
 - **Support de protocoles** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket) et sockets IP bruts ; IPv4 et IPv6 pour chaque protocole.
-- **I/O adaptative** — Modèle de Progression à Trois Niveaux (Strike-Spin-Adapt) : les opérations retournent `iox.ErrWouldBlock` immédiatement par défaut ; le backoff avec deadline ne s'active que lorsqu'il est explicitement configuré
+- **E/S adaptatives** — Par défaut, la lecture, l’écriture et l’acceptation des connexions sont non bloquantes. Si le socket n’est pas prêt, définir une échéance permet de réessayer à intervalles croissants.
 - **Prêt pour io_uring** — Chaque socket expose `FD() *iofd.FD` pour une intégration directe avec `uring`, `takt` et autres runtimes d'I/O asynchrone.
 - **I/O UDP par lots** — `SendMessages`/`RecvMessages` utilisent `sendmmsg(2)`/`recvmmsg(2)` pour traiter plusieurs datagrammes par syscall ; les variantes adaptatives ajoutent le support des deadlines.
 - **Requêtes de liens réseau** — `Links`, `LinkByName` et `LinkByIndex` fournissent une énumération Linux native des liens via `zcall` ; utilisés en interne pour la résolution des identifiants de zone IPv6.
@@ -80,21 +80,28 @@ sock implémente **Strike** et **Adapt**. Spin n'est pas utilisé ici car les op
 
 **Comportements clés :**
 
-- **Non bloquant par défaut** : Les opérations `Read`, `Write`, `Accept` et `Dial` retournent immédiatement avec `iox.ErrWouldBlock` si le noyau n'est pas prêt.
+- **Opérations non bloquantes par défaut** — `Read`, `Write` et `Accept` renvoient `iox.ErrWouldBlock` si le socket n’est pas prêt.
 - **Adaptation pilotée par deadline** : Ce n'est que lorsqu'un deadline est explicitement défini (via `SetDeadline`, `SetReadDeadline` ou `SetWriteDeadline`) que l'opération entre dans une boucle de réessai avec backoff progressif.
-- **Classification des résultats** : les compteurs et valeurs de retour portent le progrès, tandis que les erreurs
-  sémantiques portent le contrôle. Les appels directs de `sock` exposent surtout `iox.ErrWouldBlock` en absence de
-  readiness et `sock.ErrInProgress` pendant un connect en cours ; `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` et
-  `iox.IsProgress` restent le vocabulaire partagé de classification pour les helpers au-dessus de `sock`.
-- **Dial non bloquant** : Contrairement à `net.Dial`, les fonctions comme `DialTCP4` retournent immédiatement une fois la tentative de connexion lancée. Le handshake TCP peut encore être en cours (`ErrInProgress` est ignoré silencieusement). Utilisez `TCPDialer` avec un timeout pour un comportement bloquant :
+- **Classification des résultats** — Le nombre d’octets et les valeurs renvoyées indiquent la progression. Les erreurs sémantiques guident la prochaine opération. `NetSocket.Connect` renvoie `sock.ErrInProgress` si la connexion est en cours d’établissement. Les fonctions de plus haut niveau utilisent aussi `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` et `iox.IsProgress`.
+- **Connexions TCP et SCTP** — Pendant l’établissement de la connexion, `DialTCP`, `DialSCTP` et leurs variantes IPv4 et IPv6 renvoient une connexion et une erreur `nil`. Dans ce cas, `TCPDialer` et `SCTPDialer` renvoient `(nil, sock.ErrInProgress)` si `Timeout == 0`.
 
 ```go
-// Non bloquant (retourne immédiatement, handshake peut être en cours)
-conn, _ := sock.DialTCP4(nil, raddr)
+conn, err := sock.DialTCP4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
+```
 
-// Bloquant avec timeout (attend la connexion ou le timeout)
+Avec un délai positif, le dialer attend que la connexion soit établie. Dans cet exemple, il attend jusqu’à cinq secondes.
+
+```go
 dialer := &sock.TCPDialer{Timeout: 5 * time.Second}
-conn, _ := dialer.Dial4(nil, raddr)
+conn, err := dialer.Dial4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
 ```
 
 ## Installation

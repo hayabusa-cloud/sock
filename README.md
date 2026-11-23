@@ -18,7 +18,7 @@ Language: **English** | [简体中文](./README.zh-CN.md) | [Español](./README.
 - **Zero-Allocation Addresses** — Sockaddr types encode directly to kernel-facing structures; `Raw()` returns an `unsafe.Pointer` with no marshaling and no heap allocation.
 - **Zero-Overhead Syscalls** — All I/O paths use `zcall` assembly entry points that call into the kernel without routing through the Go runtime scheduler.
 - **Protocol Support** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket), and raw IP sockets; IPv4 and IPv6 for each.
-- **Adaptive I/O** — Three-Tier Progress Model (Strike-Spin-Adapt): operations return `iox.ErrWouldBlock` immediately by default; deadline-driven backoff engages only when explicitly set
+- **Adaptive I/O** — Reads, writes, and accepts are non-blocking by default. A deadline enables retries with backoff when the socket is not ready.
 - **io_uring Ready** — Every socket exposes `FD() *iofd.FD` for direct integration with `uring`, `takt`, and other async I/O runtimes.
 - **UDP Batch I/O** — `SendMessages`/`RecvMessages` use `sendmmsg(2)`/`recvmmsg(2)` to process multiple datagrams per syscall; adaptive variants add deadline support.
 - **Network Link Queries** — `Links`, `LinkByName`, and `LinkByIndex` provide Linux-native link enumeration via `zcall`; used internally for IPv6 zone ID resolution.
@@ -80,22 +80,28 @@ sock implements **Strike** and **Adapt**. Spin is not used here because socket o
 
 **Key behaviors:**
 
-- **Non-blocking by default**: `Read`, `Write`, `Accept`, and `Dial` operations return immediately with `iox.ErrWouldBlock` if the kernel is not ready.
+- **Non-blocking by default** — `Read`, `Write`, and `Accept` return `iox.ErrWouldBlock` when the socket is not ready.
 - **Deadline-driven adaptation**: Only when a deadline is explicitly set (via `SetDeadline`, `SetReadDeadline`, or `SetWriteDeadline`) does the operation enter a retry loop with progressive backoff.
-- **Outcome classification**: byte counts and returned values carry progress, while semantic errors carry control.
-  Direct `sock` calls usually surface `iox.ErrWouldBlock` on not-ready paths and `sock.ErrInProgress` on pending
-  connect;
-  `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic`, and `iox.IsProgress` remain shared classifier vocabulary for helpers
-  layered above `sock`.
-- **Non-blocking Dial**: Unlike `net.Dial`, functions like `DialTCP4` return immediately once the connection attempt starts. The TCP handshake may still be in progress (`ErrInProgress` is silently ignored). Use `TCPDialer` with a timeout for blocking behavior:
+- **Outcome classification** — Byte counts and return values report progress. Semantic errors guide the caller’s next operation. `NetSocket.Connect` returns `sock.ErrInProgress` when a connection attempt is pending. Higher-level helpers also use `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic`, and `iox.IsProgress`.
+- **TCP and SCTP dials** — When the handshake is pending, `DialTCP`, `DialSCTP`, and their IPv4 and IPv6 variants return a connection and a nil error. In the same case, a `TCPDialer` or `SCTPDialer` with `Timeout == 0` returns `(nil, sock.ErrInProgress)`.
 
 ```go
-// Non-blocking (returns immediately, handshake may be in progress)
-conn, _ := sock.DialTCP4(nil, raddr)
+conn, err := sock.DialTCP4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
+```
 
-// Blocking with timeout (waits for connection or timeout)
+With a positive timeout, the dialer waits for the handshake. This example waits up to five seconds.
+
+```go
 dialer := &sock.TCPDialer{Timeout: 5 * time.Second}
-conn, _ := dialer.Dial4(nil, raddr)
+conn, err := dialer.Dial4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
 ```
 
 ## Installation

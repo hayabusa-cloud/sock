@@ -18,7 +18,7 @@ Idioma: [English](./README.md) | [简体中文](./README.zh-CN.md) | **Español*
 - **Direcciones sin asignación** — Los tipos Sockaddr se codifican directamente en estructuras orientadas al kernel; `Raw()` devuelve un `unsafe.Pointer` sin marshaling ni asignación en el heap.
 - **Syscalls sin sobrecarga** — Todos los caminos de I/O usan puntos de entrada de ensamblador `zcall` que llaman al kernel directamente, sin pasar por el planificador del runtime de Go.
 - **Soporte de protocolos** — TCP, UDP, SCTP, Unix domain (stream/dgram/seqpacket) y sockets IP raw; IPv4 e IPv6 para cada protocolo.
-- **I/O adaptativa** — Modelo de Progreso de Tres Niveles (Strike-Spin-Adapt): las operaciones devuelven `iox.ErrWouldBlock` inmediatamente por defecto; el backoff con deadline se activa solo cuando se configura explícitamente
+- **E/S adaptativa** — Por defecto, las operaciones de lectura, escritura y aceptación de conexiones son no bloqueantes. Si el socket no está listo y se ha fijado un plazo, la operación se reintenta con pausas progresivas.
 - **Listo para io_uring** — Cada socket expone `FD() *iofd.FD` para integración directa con `uring`, `takt` y otros runtimes de I/O asíncrona.
 - **I/O UDP por lotes** — `SendMessages`/`RecvMessages` usan `sendmmsg(2)`/`recvmmsg(2)` para procesar múltiples datagramas por syscall; las variantes adaptativas añaden soporte de deadlines.
 - **Consultas de enlaces de red** — `Links`, `LinkByName` y `LinkByIndex` proveen enumeración de enlaces Linux nativa via `zcall`; usados internamente para resolución de IDs de zona IPv6.
@@ -80,21 +80,28 @@ sock implementa **Strike** y **Adapt**. Spin no se utiliza aquí porque las oper
 
 **Comportamientos clave:**
 
-- **No bloqueante por defecto**: Las operaciones `Read`, `Write`, `Accept` y `Dial` retornan inmediatamente con `iox.ErrWouldBlock` si el kernel no está listo.
+- **Operaciones no bloqueantes por defecto** — `Read`, `Write` y `Accept` devuelven `iox.ErrWouldBlock` si el socket no está listo.
 - **Adaptación dirigida por deadline**: Solo cuando se establece explícitamente un deadline (via `SetDeadline`, `SetReadDeadline` o `SetWriteDeadline`) la operación entra en un bucle de reintentos con backoff progresivo.
-- **Clasificación de resultados**: los conteos y valores de retorno llevan el progreso, mientras que los errores
-  semánticos llevan el control. Las llamadas directas de `sock` suelen exponer `iox.ErrWouldBlock` cuando no hay
-  readiness y `sock.ErrInProgress` durante un connect pendiente; `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` e
-  `iox.IsProgress` siguen siendo el vocabulario compartido para helpers por encima de `sock`.
-- **Dial no bloqueante**: A diferencia de `net.Dial`, funciones como `DialTCP4` retornan inmediatamente una vez que comienza el intento de conexión. El handshake TCP puede estar aún en progreso (`ErrInProgress` se ignora silenciosamente). Use `TCPDialer` con timeout para comportamiento bloqueante:
+- **Clasificación de resultados** — El número de bytes y los valores devueltos indican el progreso. Los errores semánticos orientan la siguiente operación. `NetSocket.Connect` devuelve `sock.ErrInProgress` si el intento de conexión sigue en curso. Las funciones de nivel superior también usan `iox.ErrMore`, `iox.Classify`, `iox.IsSemantic` e `iox.IsProgress`.
+- **Conexiones TCP y SCTP** — Mientras se establece la conexión, `DialTCP`, `DialSCTP` y sus variantes para IPv4 e IPv6 devuelven una conexión y un error `nil`. En ese caso, `TCPDialer` y `SCTPDialer` devuelven `(nil, sock.ErrInProgress)` si `Timeout == 0`.
 
 ```go
-// No bloqueante (retorna inmediatamente, handshake puede estar en progreso)
-conn, _ := sock.DialTCP4(nil, raddr)
+conn, err := sock.DialTCP4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
+```
 
-// Bloqueante con timeout (espera conexión o timeout)
+Con un tiempo de espera positivo, el dialer espera a que se establezca la conexión. En este ejemplo espera hasta cinco segundos.
+
+```go
 dialer := &sock.TCPDialer{Timeout: 5 * time.Second}
-conn, _ := dialer.Dial4(nil, raddr)
+conn, err := dialer.Dial4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
 ```
 
 ## Instalación
