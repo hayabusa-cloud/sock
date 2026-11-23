@@ -50,7 +50,7 @@ NetSocket（基底）
 └── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
-すべてのソケットは`FD() *iofd.FD`を公開し、io_uringや他の非同期I/Oメカニズムとの統合を可能にします。
+io_uring などの非同期 I/O では、`FD()` でソケットが所有する `*iofd.FD` を借用できます。この記述子を使う操作と、`SyscallConn` が返すハンドルに対する呼び出しがすべて終わってから、ソケットを閉じます。個別に閉じられる記述子が必要な場合は `s.FD().Dup()` を使います。
 
 ### カーネル統合
 

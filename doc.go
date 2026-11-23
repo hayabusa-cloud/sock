@@ -80,8 +80,12 @@
 //   - [RawSocket], [RawConn] for raw IP (requires -tags rawsock and CAP_NET_RAW)
 //   - [Link], [Links], [LinkByName], [LinkByIndex] for Linux network link queries
 //
-// All sockets expose [iofd.FD] via the FD method for io_uring integration and
-// other async I/O mechanisms.
+// [NetSocket.FD] returns the socket's borrowed [iofd.FD] for io_uring and
+// other async I/O. Keep the socket open until operations using the descriptor
+// have finished. This includes Control, Read, and Write calls on a handle
+// returned by SyscallConn. A concurrent [NetSocket.Close] can invalidate the
+// descriptor during a callback. Use [iofd.FD.Dup] for an independently owned
+// descriptor.
 //
 // # Compatibility
 //

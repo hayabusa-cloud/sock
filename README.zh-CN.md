@@ -50,7 +50,7 @@ NetSocket（基类）
 └── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
-所有套接字都暴露 `FD() *iofd.FD` 以便与 io_uring 和其他异步 I/O 机制集成。
+接入 io_uring 等异步 I/O 机制时，可以通过 `FD()` 借用套接字的 `*iofd.FD`。使用该描述符或 `SyscallConn` 句柄的操作全部结束后，再关闭套接字。如需可单独关闭的描述符，使用 `s.FD().Dup()` 创建副本。
 
 ### 内核集成
 

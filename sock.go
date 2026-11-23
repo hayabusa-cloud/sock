@@ -69,6 +69,9 @@ func NewNetUnixSocket(typ int) (*NetSocket, error) {
 	return NewNetSocket(zcall.AF_UNIX, typ, 0)
 }
 
+// FD returns the socket's borrowed descriptor. Use [iofd.FD.Dup] for a
+// descriptor you can close independently.
+//
 //go:nosplit
 func (s *NetSocket) FD() *iofd.FD { return s.fd }
 
@@ -81,6 +84,8 @@ func (s *NetSocket) Protocol() UnderlyingProtocol {
 	return UnderlyingProtocol(s.typ & 0xF)
 }
 
+// Close releases the socket's descriptor. Call it after socket operations
+// and all uses of the borrowed descriptor have finished.
 func (s *NetSocket) Close() error { return s.fd.Close() }
 
 func (s *NetSocket) isDatagramOrSeqpacket() bool {

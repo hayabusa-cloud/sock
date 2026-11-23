@@ -50,7 +50,7 @@ NetSocket (base)
 └── RawSocket → RawConn (-tags rawsock, CAP_NET_RAW)
 ```
 
-All sockets expose `FD() *iofd.FD` for integration with io_uring and other async I/O mechanisms.
+For io_uring and other async I/O, `FD()` returns a borrowed `*iofd.FD`. Keep the socket open until operations using that descriptor or a `SyscallConn` handle have finished. Use `s.FD().Dup()` for a descriptor you can close independently.
 
 ### Kernel Integration
 
