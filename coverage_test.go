@@ -6541,13 +6541,12 @@ func TestDecodeTCPAddr_IPv6WithZone(t *testing.T) {
 }
 
 func TestDecodeUDPAddr_IPv6WithZone(t *testing.T) {
-	// Create a raw sockaddr with IPv6 and scope ID
-	var raw RawSockaddrAny
-	inet6 := (*RawSockaddrInet6)(unsafe.Pointer(&raw))
-	inet6.Family = AF_INET6
-	inet6.Port = htons(5353)
-	inet6.Addr = [16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
-	inet6.ScopeID = 3
+	raw := RawSockaddrInet6{
+		Family:  AF_INET6,
+		Port:    htons(5353),
+		Addr:    [16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+		ScopeID: 3,
+	}
 
 	addr := decodeUDPAddr(&raw)
 	if addr == nil {

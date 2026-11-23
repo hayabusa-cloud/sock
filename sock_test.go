@@ -1144,8 +1144,7 @@ func TestDecodeUDPAddr(t *testing.T) {
 	})
 
 	t.Run("IPv4", func(t *testing.T) {
-		raw := &RawSockaddrAny{}
-		raw.Addr.Family = AF_INET
+		raw := &RawSockaddrInet6{Family: AF_INET}
 		rawInet4 := (*RawSockaddrInet4)(unsafe.Pointer(raw))
 		rawInet4.Addr = [4]byte{192, 168, 1, 1}
 		rawInet4.Port = htons(5353)
@@ -1154,22 +1153,32 @@ func TestDecodeUDPAddr(t *testing.T) {
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
 		}
+		wantIP := rawInet4.Addr
+		rawInet4.Addr = [4]byte{}
+		if len(addr.IP) != len(wantIP) || !addr.IP.Equal(wantIP[:]) {
+			t.Errorf("IP after reusing sockaddr = %v, want %v", addr.IP, IP(wantIP[:]))
+		}
 		if addr.Port != 5353 {
 			t.Errorf("Expected port 5353, got %d", addr.Port)
 		}
 	})
 
 	t.Run("IPv6", func(t *testing.T) {
-		raw := &RawSockaddrAny{}
-		raw.Addr.Family = AF_INET6
-		rawInet6 := (*RawSockaddrInet6)(unsafe.Pointer(raw))
-		rawInet6.Addr = [16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
-		rawInet6.Port = htons(5353)
-		rawInet6.ScopeID = 2
+		raw := &RawSockaddrInet6{
+			Family:  AF_INET6,
+			Port:    htons(5353),
+			Addr:    [16]byte{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+			ScopeID: 2,
+		}
 
 		addr := decodeUDPAddr(raw)
 		if addr == nil {
 			t.Fatal("Expected non-nil addr")
+		}
+		wantIP := raw.Addr
+		raw.Addr = [16]byte{}
+		if len(addr.IP) != len(wantIP) || !addr.IP.Equal(wantIP[:]) {
+			t.Errorf("IP after reusing sockaddr = %v, want %v", addr.IP, IP(wantIP[:]))
 		}
 		if addr.Port != 5353 {
 			t.Errorf("Expected port 5353, got %d", addr.Port)
@@ -1180,9 +1189,7 @@ func TestDecodeUDPAddr(t *testing.T) {
 	})
 
 	t.Run("UnknownFamily", func(t *testing.T) {
-		raw := &RawSockaddrAny{}
-		raw.Addr.Family = 255
-
+		raw := &RawSockaddrInet6{Family: 255}
 		addr := decodeUDPAddr(raw)
 		if addr != nil {
 			t.Error("Expected nil for unknown family")

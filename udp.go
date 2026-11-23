@@ -61,18 +61,24 @@ func applyUDPDefaults(fd *iofd.FD) error {
 //go:nosplit
 func (s *UDPSocket) Protocol() UnderlyingProtocol { return UnderlyingProtocolDgram }
 
+// Read receives one datagram and discards any bytes that do not fit in buf.
+func (s *UDPSocket) Read(buf []byte) (int, error) {
+	return s.recvFrom(buf, nil, nil)
+}
+
 func (s *UDPSocket) RecvFrom(buf []byte) (int, *UDPAddr, error) {
-	raw := s.fd.Raw()
-	if raw < 0 {
-		return 0, nil, ErrClosed
+	var rsa RawSockaddrInet6
+	rsaLen := uint32(SizeofSockaddrInet6)
+	n, err := s.recvFrom(buf, unsafe.Pointer(&rsa), &rsaLen)
+	if err != nil {
+		return 0, nil, err
 	}
-	var rsa RawSockaddrAny
-	rsaLen := uint32(SizeofSockaddrAny)
-	n, errno := zcall.Recvfrom(uintptr(raw), buf, 0, unsafe.Pointer(&rsa), unsafe.Pointer(&rsaLen))
-	if errno != 0 {
-		return int(n), nil, errFromErrno(errno)
-	}
-	return int(n), decodeUDPAddr(&rsa), nil
+	return n, decodeUDPAddr(&rsa), nil
+}
+
+// Write sends one datagram to the connected peer, including an empty datagram.
+func (s *UDPSocket) Write(buf []byte) (int, error) {
+	return s.sendConnected(buf)
 }
 
 func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
@@ -83,18 +89,14 @@ func (s *UDPSocket) SendTo(buf []byte, addr *UDPAddr) (int, error) {
 	if raw < 0 {
 		return 0, ErrClosed
 	}
-	var sa Sockaddr
+	var ptr unsafe.Pointer
+	var length uint32
 	if addr.IP.To4() != nil {
-		sa = udpAddrToSockaddr4(addr)
+		ptr, length = udpAddrToSockaddr4(addr).Raw()
 	} else {
-		sa = udpAddrToSockaddr6(addr)
+		ptr, length = udpAddrToSockaddr6(addr).Raw()
 	}
-	ptr, length := sa.Raw()
-	n, errno := zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length))
-	if errno != 0 {
-		return int(n), errFromErrno(errno)
-	}
-	return int(n), nil
+	return socketIOResult(zcall.Sendto(uintptr(raw), buf, 0, ptr, uintptr(length)))
 }
 
 // UDPConn represents a UDP connection (connected or unconnected).
@@ -126,6 +128,7 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
+// ReadFrom reads a datagram and returns its sender's address when available.
 func (c *UDPConn) ReadFrom(buf []byte) (int, Addr, error) {
 	var n int
 	var addr *UDPAddr
@@ -134,6 +137,9 @@ func (c *UDPConn) ReadFrom(buf []byte) (int, Addr, error) {
 		n, addr, recvErr = c.UDPSocket.RecvFrom(buf)
 		return n, recvErr
 	}, &c.deadline)
+	if addr == nil {
+		return n, nil, err
+	}
 	return n, addr, err
 }
 
@@ -145,21 +151,17 @@ func (c *UDPConn) WriteTo(buf []byte, addr Addr) (int, error) {
 	return adaptiveWrite(func() (int, error) { return c.UDPSocket.SendTo(buf, udpAddr) }, &c.deadline)
 }
 
+// Read receives one datagram. An empty buf still consumes a queued datagram.
 func (c *UDPConn) Read(buf []byte) (int, error) {
-	return adaptiveRead(func() (int, error) {
-		if c.raddr == nil {
-			n, _, err := c.UDPSocket.RecvFrom(buf)
-			return n, err
-		}
-		return c.NetSocket.Read(buf)
-	}, &c.deadline)
+	return adaptiveRead(func() (int, error) { return c.UDPSocket.Read(buf) }, &c.deadline)
 }
 
+// Write sends one datagram to the connected peer. An empty buf sends an empty datagram.
 func (c *UDPConn) Write(buf []byte) (int, error) {
 	if c.raddr == nil {
 		return 0, ErrNotConnected
 	}
-	return adaptiveWrite(func() (int, error) { return c.NetSocket.Write(buf) }, &c.deadline)
+	return adaptiveWrite(func() (int, error) { return c.UDPSocket.Write(buf) }, &c.deadline)
 }
 
 // SyscallConn returns a raw network connection for direct syscall access.
@@ -334,19 +336,30 @@ func udpAddrToSockaddr6(addr *UDPAddr) *SockaddrInet6 {
 	return NewSockaddrInet6(ip, uint16(addr.Port), zoneToScopeID(addr.Zone))
 }
 
-func decodeUDPAddr(raw *RawSockaddrAny) *UDPAddr {
+// A sockaddr_in6 has room for either UDP address family.
+func decodeUDPAddr(raw *RawSockaddrInet6) *UDPAddr {
 	if raw == nil {
 		return nil
 	}
-	switch raw.Addr.Family {
+	switch raw.Family {
 	case AF_INET:
 		sa := (*RawSockaddrInet4)(unsafe.Pointer(raw))
-		return &UDPAddr{IP: net.IP(sa.Addr[:]), Port: int(ntohs(sa.Port))}
+		return newUDPAddr(sa.Addr[:], sa.Port, "")
 	case AF_INET6:
-		sa := (*RawSockaddrInet6)(unsafe.Pointer(raw))
-		return &UDPAddr{IP: net.IP(sa.Addr[:]), Port: int(ntohs(sa.Port)), Zone: scopeIDToZone(sa.ScopeID)}
+		return newUDPAddr(raw.Addr[:], raw.Port, scopeIDToZone(raw.ScopeID))
 	}
 	return nil
+}
+
+func newUDPAddr(ip []byte, networkPort uint16, zone string) *UDPAddr {
+	// Keep the IP bytes and their address in one allocation.
+	sender := new(struct {
+		addr UDPAddr
+		ip   [net.IPv6len]byte
+	})
+	n := copy(sender.ip[:], ip)
+	sender.addr = UDPAddr{IP: sender.ip[:n:n], Port: int(ntohs(networkPort)), Zone: zone}
+	return &sender.addr
 }
 
 var (

@@ -7,7 +7,7 @@ This is `sock`, a zero-allocation socket library for Go built on:
 - `iofd`: File descriptor abstractions
 - `iox`: Non-blocking I/O semantics (ErrWouldBlock, ErrMore)
 
-Target: Linux kernel 6.18+, Go 1.26+
+Target: Linux kernel 6.18+, Go 1.27+
 
 ## iox Outcome Algebra
 
@@ -20,8 +20,8 @@ ErrWouldBlock ErrMore
 ```
 
 - `nil`: completion for this call
-- `ErrWouldBlock`: no progress on this attempt; retry via the owned wait policy
-- `ErrMore`: progress happened; the operation stays active
+- `ErrWouldBlock` means further progress requires readiness.
+- `ErrMore` means the operation remains active, even when the count is zero.
 - other error: real failure
 
 Review by this algebra:
@@ -124,9 +124,9 @@ Returns: 0 (success), EISCONN (already connected), or actual error
 
 **Kernel behavior (af_inet.c)**: Second connect() on TCP_CLOSE calls `sock_error()` which atomically returns AND clears `sk_err`. The SO_ERROR path is effectively dead code.
 
-**Linux AF_UNIX note**: a pending non-blocking Unix-domain `connect(2)` may
-surface as `EAGAIN` / `EWOULDBLOCK` (`iox.ErrWouldBlock`), not only
-`EINPROGRESS`. Treat that as pending control flow, not a hard failure.
+On Linux, `DialUnix` returns `(nil, iox.ErrWouldBlock)` when a stream or
+sequenced-packet listener's accept queue is full. Retry the dial after the
+listener accepts a connection.
 
 ### Error Semantics
 

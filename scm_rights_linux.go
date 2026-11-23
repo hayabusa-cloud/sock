@@ -176,8 +176,8 @@ func SendFDs(fd *iofd.FD, fds []int, data []byte) (int, error) {
 	return int(n), nil
 }
 
-// RecvFDs receives file descriptors from a Unix socket.
-// Returns the received data, file descriptors, and any error.
+// RecvFDs reads data and up to maxFDs file descriptors from a Unix socket.
+// It returns the data byte count and the received descriptors. Linux discards any excess descriptors.
 func RecvFDs(fd *iofd.FD, dataBuf []byte, maxFDs int) (int, []int, error) {
 	// Stack buffer for dummy byte when no data buffer provided
 	var dummy [1]byte
@@ -190,8 +190,8 @@ func RecvFDs(fd *iofd.FD, dataBuf []byte, maxFDs int) (int, []int, error) {
 		Len:  uint64(len(dataBuf)),
 	}
 
-	// Stack buffer for common case (≤8 FDs)
-	buflen := CmsgSpace(maxFDs * 4)
+	// Trailing alignment padding would fit an extra descriptor when maxFDs is odd.
+	buflen := CmsgLen(maxFDs * 4)
 	var stackBuf [scmRightsStackSize]byte
 	var cmsgBuf []byte
 	if buflen <= len(stackBuf) {

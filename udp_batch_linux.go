@@ -23,7 +23,7 @@ type UDPMessage struct {
 	// these buffers. For RecvMessages, data is written to these buffers.
 	Buffers [][]byte
 
-	// OOB holds out-of-band/ancillary data (control messages).
+	// OOB holds ancillary data. After a receive, OOB[:NN] holds the bytes copied.
 	OOB []byte
 
 	// Flags contains message flags (e.g., MSG_TRUNC, MSG_CTRUNC).
@@ -33,6 +33,9 @@ type UDPMessage struct {
 	// after a successful send. For RecvMessages, this is the number of bytes
 	// received into Buffers.
 	N int
+
+	// NN is the number of control bytes submitted on send or copied into OOB on receive.
+	NN int
 }
 
 // SendMessages sends multiple UDP messages in a single syscall.
@@ -40,8 +43,7 @@ type UDPMessage struct {
 // Non-blocking: returns iox.ErrWouldBlock if the socket buffer is full.
 //
 // Each message in msgs should have Addr and Buffers populated.
-// After return, the N field of each successfully sent message is updated
-// with the number of bytes sent.
+// Each successfully sent message reports its payload and control byte counts in N and NN.
 func (c *UDPConn) SendMessages(msgs []UDPMessage) (int, error) {
 	if len(msgs) == 0 {
 		return 0, nil
@@ -89,12 +91,12 @@ func (c *UDPConn) SendMessages(msgs []UDPMessage) (int, error) {
 
 	n, errno := zcall.Sendmmsg(uintptr(raw), unsafe.Pointer(&mmsghdrs[0]), uintptr(len(msgs)), 0)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 
-	// Update N field for each sent message
 	for i := range n {
 		msgs[i].N = int(mmsghdrs[i].Len)
+		msgs[i].NN = len(msgs[i].OOB)
 	}
 
 	return int(n), nil
@@ -105,8 +107,8 @@ func (c *UDPConn) SendMessages(msgs []UDPMessage) (int, error) {
 // Non-blocking: returns iox.ErrWouldBlock if no data is available.
 //
 // Each message in msgs should have Buffers pre-allocated.
-// After return, the Addr, OOB, Flags, and N fields of each successfully
-// received message are updated.
+// Each received message reports its sender in Addr, message flags in Flags,
+// payload bytes in N, and control bytes in NN. The OOB slice keeps its input length.
 func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 	if len(msgs) == 0 {
 		return 0, nil
@@ -120,14 +122,14 @@ func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 	// Allocate mmsghdr array and iovec arrays
 	mmsghdrs := make([]zcall.Mmsghdr, len(msgs))
 	iovecs := make([][]zcall.Iovec, len(msgs))
-	sockaddrs := make([]RawSockaddrAny, len(msgs))
+	sockaddrs := make([]RawSockaddrInet6, len(msgs))
 
 	for i := range msgs {
 		msg := &msgs[i]
 
 		// Set up sockaddr for receiving source address
 		mmsghdrs[i].Hdr.Name = (*byte)(unsafe.Pointer(&sockaddrs[i]))
-		mmsghdrs[i].Hdr.Namelen = SizeofSockaddrAny
+		mmsghdrs[i].Hdr.Namelen = SizeofSockaddrInet6
 
 		// Build iovec array for this message
 		if len(msg.Buffers) > 0 {
@@ -151,7 +153,7 @@ func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 
 	n, errno := zcall.Recvmmsg(uintptr(raw), unsafe.Pointer(&mmsghdrs[0]), uintptr(len(msgs)), zcall.MSG_DONTWAIT, nil)
 	if errno != 0 {
-		return int(n), errFromErrno(errno)
+		return 0, errFromErrno(errno)
 	}
 
 	// Update fields for each received message
@@ -159,6 +161,7 @@ func (c *UDPConn) RecvMessages(msgs []UDPMessage) (int, error) {
 		msgs[i].Addr = decodeUDPAddr(&sockaddrs[i])
 		msgs[i].Flags = int(mmsghdrs[i].Hdr.Flags)
 		msgs[i].N = int(mmsghdrs[i].Len)
+		msgs[i].NN = int(mmsghdrs[i].Hdr.Controllen)
 	}
 
 	return int(n), nil

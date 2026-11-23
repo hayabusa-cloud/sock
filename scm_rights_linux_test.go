@@ -101,8 +101,8 @@ func TestSendRecvFDs(t *testing.T) {
 	// Get the fd
 	sendFd := int(tmpfile.Fd())
 
-	// Send the file descriptor
-	n, err := sock.SendFDs(&fd0, []int{sendFd}, []byte("x"))
+	// Send two copies of the file descriptor and ask to receive only one.
+	n, err := sock.SendFDs(&fd0, []int{sendFd, sendFd}, []byte("x"))
 	if err != nil {
 		t.Fatalf("SendFDs failed: %v", err)
 	}
@@ -120,7 +120,10 @@ func TestSendRecvFDs(t *testing.T) {
 		t.Errorf("RecvFDs returned %d bytes, want 1", n)
 	}
 	if len(recvFds) != 1 {
-		t.Fatalf("RecvFDs returned %d fds, want 1", len(recvFds))
+		for _, fd := range recvFds {
+			zcall.Close(uintptr(fd))
+		}
+		t.Fatalf("RecvFDs with maxFDs=1 returned %d fds, want 1", len(recvFds))
 	}
 
 	// The received fd should be different from the sent one
