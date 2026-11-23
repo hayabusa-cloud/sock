@@ -18,7 +18,7 @@ Go言語向けゼロアロケーションソケット型とアドレス処理ラ
 - **ゼロアロケーションアドレス** — Sockaddr 型はカーネル向け構造体へ直接エンコード；`Raw()` はマーシャリングなし・ヒープ確保なしで `unsafe.Pointer` を返します。
 - **ゼロオーバーヘッドシステムコール** — すべての I/O パスは `zcall` アセンブリエントリポイントを通じてカーネルを直接呼び出し、Go ランタイムスケジューラを経由しません。
 - **プロトコルサポート** — TCP、UDP、SCTP、Unix ドメイン（stream/dgram/seqpacket）、および raw IP ソケット；各プロトコルで IPv4・IPv6 に対応。
-- **適応型 I/O** — 三層プログレスモデル（Strike-Spin-Adapt）：デフォルトで操作は即座に `iox.ErrWouldBlock` を返し、デッドラインが設定された場合のみバックオフリトライを有効化します
+- **適応型 I/O** — 読み取り、書き込み、接続の受け付けはデフォルトでノンブロッキングです。デッドラインを設定すると、ソケットの準備ができていない間は待ち時間を延ばしながら再試行します。
 - **io_uring 対応** — すべてのソケットは `FD() *iofd.FD` でファイルディスクリプタを公開し、`uring`・`takt` などの非同期 I/O ランタイムと直接統合できます。
 - **UDP バッチ I/O** — `SendMessages`/`RecvMessages` は `sendmmsg(2)`/`recvmmsg(2)` を使用し、1 回のシステムコールで複数のデータグラムを処理；適応型バリアントはデッドラインに対応。
 - **ネットワークリンク照会** — `Links`・`LinkByName`・`LinkByIndex` は `zcall` を通じた Linux ネイティブのリンク列挙を提供；内部で IPv6 ゾーン ID 解決に使用。
@@ -80,20 +80,28 @@ sockは**Strike**と**Adapt**を実装します。ソケット操作はカーネ
 
 **主な動作：**
 
-- **デフォルトでノンブロッキング**: `Read`、`Write`、`Accept`、`Dial`操作はカーネルが準備できていない場合、即座に`iox.ErrWouldBlock`を返します。
+- **デフォルトはノンブロッキング** — ソケットの準備ができていない場合、`Read`、`Write`、`Accept` は `iox.ErrWouldBlock` を返します。
 - **デッドライン駆動の適応**: デッドラインが明示的に設定された場合（`SetDeadline`、`SetReadDeadline`、`SetWriteDeadline`経由）のみ、操作は漸進的バックオフ付きのリトライループに入ります。
-- **結果分類**: 進捗はバイト数や戻り値の側に載り、制御はセマンティックエラーの側に載ります。`sock` の直接呼び出しは、未準備時には主に
-  `iox.ErrWouldBlock`、接続保留中には `sock.ErrInProgress` を返します。`iox.ErrMore`、`iox.Classify`、`iox.IsSemantic`、
-  `iox.IsProgress` は、`sock` の上に積まれたヘルパー層でも使う共有の分類語彙です。
-- **ノンブロッキングDial**: `net.Dial`と異なり、`DialTCP4`などの関数は接続試行開始後すぐに戻ります。TCPハンドシェイクはまだ進行中の場合があります（`ErrInProgress`は暗黙的に無視されます）。ブロッキング動作にはタイムアウト付きの`TCPDialer`を使用してください：
+- **結果の分類** — バイト数と戻り値は処理がどこまで進んだかを示し、セマンティックエラーは呼び出し側が次の操作を選ぶ手がかりになります。接続処理が進行中の場合、`NetSocket.Connect` は `sock.ErrInProgress` を返します。上位のヘルパーは `iox.ErrMore`、`iox.Classify`、`iox.IsSemantic`、`iox.IsProgress` も使います。
+- **TCP と SCTP の接続** — ハンドシェイクが進行中でも、`DialTCP`、`DialSCTP` およびそれぞれの IPv4・IPv6 版は接続と `nil` エラーを返します。同じ状況で `Timeout == 0` の `TCPDialer` と `SCTPDialer` は `(nil, sock.ErrInProgress)` を返します。
 
 ```go
-// ノンブロッキング（即座に戻る、ハンドシェイクは進行中の可能性あり）
-conn, _ := sock.DialTCP4(nil, raddr)
+conn, err := sock.DialTCP4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
+```
 
-// タイムアウト付きブロッキング（接続完了またはタイムアウトまで待機）
+タイムアウトに正の値を指定すると、ダイヤラーはハンドシェイクの完了を待ちます。この例では最大 5 秒間待ちます。
+
+```go
 dialer := &sock.TCPDialer{Timeout: 5 * time.Second}
-conn, _ := dialer.Dial4(nil, raddr)
+conn, err := dialer.Dial4(nil, raddr)
+if err != nil {
+	return err
+}
+defer conn.Close()
 ```
 
 ## インストール
