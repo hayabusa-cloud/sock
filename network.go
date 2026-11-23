@@ -91,9 +91,8 @@ func (c *rawConn) Control(f func(fd uintptr)) error {
 // If f returns true, Read returns nil. If f returns false, Read
 // retries with network-tuned backoff until f returns true or the fd is closed.
 //
-// The callback should return true when data is transferred (≥1 byte),
-// false when no data is available. Partial transfers should return true;
-// buffering is handled at higher layers.
+// Return false when the read would block. Return true on success (including
+// a short read or an empty datagram), EOF, or a terminal error.
 func (c *rawConn) Read(f func(fd uintptr) (done bool)) error {
 	var backoff netBackoff
 	for {
@@ -113,9 +112,8 @@ func (c *rawConn) Read(f func(fd uintptr) (done bool)) error {
 // If f returns true, Write returns nil. If f returns false, Write
 // retries with network-tuned backoff until f returns true or the fd is closed.
 //
-// The callback should return true when data is transferred (≥1 byte),
-// false when no data is available. Partial transfers should return true;
-// buffering is handled at higher layers.
+// Return false when the write would block. Return true on success (including
+// a short write or an empty datagram) or a terminal error.
 func (c *rawConn) Write(f func(fd uintptr) (done bool)) error {
 	var backoff netBackoff
 	for {

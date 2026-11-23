@@ -36,12 +36,11 @@ Code above `sock` owns:
 
 ```go
 import (
-"bytes"
-"net"
-"time"
+	"bytes"
+	"time"
 
-"code.hybscloud.com/iox"
-"code.hybscloud.com/sock"
+	"code.hybscloud.com/iox"
+	"code.hybscloud.com/sock"
 )
 ```
 
@@ -162,10 +161,7 @@ Every I/O call in `iox` classifies into four observable cases:
 Outcome = { OK, WouldBlock, More, Failure }
 ```
 
-`OK` and `Failure` are terminal: the operation completed or broke. `WouldBlock`
-and `More` are *semantic* (non-terminal): they signal that the operation can
-resume. `Classify(err) → Outcome` is the universal classifier; `IsSemantic`,
-`IsNonFailure`, and `IsProgress` are derived predicates on this carrier.
+`iox.Classify(err)` describes one call. `OK` can mean a short stream write or a complete datagram. On `Failure`, handle the original error. `WouldBlock` and `More` describe how work can resume. For a boolean check, pass `err` to `IsSemantic`, `IsNonFailure`, or `IsProgress`.
 
 For reads and writes, account for the returned count before handling the outcome.
 
